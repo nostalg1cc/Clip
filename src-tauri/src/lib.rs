@@ -334,9 +334,9 @@ fn update_win_v_override(_app: &tauri::AppHandle, _enabled: bool) {}
 fn accent_for(light: bool, acrylic: bool) -> (u32, (u8, u8, u8, u8)) {
     let state = if acrylic { 4 } else { 3 };
     let tint = if light {
-        (244, 245, 248, 190)
+        (244, 245, 248, 180)
     } else {
-        (12, 12, 15, 216)
+        (20, 20, 25, 180)
     };
     (state, tint)
 }

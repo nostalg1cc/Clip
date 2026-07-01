@@ -25,9 +25,9 @@ img { -webkit-user-drag: none; user-select: none; pointer-events: none; }
 
 .top-bar {
   display: flex; align-items: center; gap: 11px;
-  padding: 0 15px; height: 46px; flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.045);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 10px 15px 6px; flex-shrink: 0;
+  background: transparent;
+  border-bottom: none;
 }
 .top-bar-search { flex-shrink: 0; }
 .search-btn {
@@ -117,7 +117,7 @@ img { -webkit-user-drag: none; user-select: none; pointer-events: none; }
   --fl: 0px; --fr: 0px;
   flex: 1;
   display: flex; flex-direction: row; align-items: stretch; gap: 14px;
-  padding: 20px 18px 22px;
+  padding: 8px 18px 22px;
   overflow-x: auto; overflow-y: hidden;
   scrollbar-width: none; min-height: 0;
   cursor: grab;
@@ -447,8 +447,8 @@ img { -webkit-user-drag: none; user-select: none; pointer-events: none; }
 ══════════════════════════════════════════════════════════════════════════════ */
 
 [data-theme="light"] .top-bar {
-  background: rgba(0, 0, 0, 0.035);
-  border-bottom-color: rgba(0, 0, 0, 0.08);
+  background: transparent;
+  border-bottom: none;
 }
 [data-theme="light"] .fluent-search {
   background-color: rgba(0, 0, 0, 0.05) !important;
