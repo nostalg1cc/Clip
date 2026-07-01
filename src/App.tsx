@@ -683,7 +683,7 @@ function Card({
   return (
     <div
       className={`card kind-${kind}${isMedia ? " is-media" : ""}${entry.pinned ? " is-pinned" : ""}`}
-      style={arStyle}
+      style={{ ...arStyle, "--header-color": headerColor } as React.CSSProperties}
       onClick={onCardClick}
       onContextMenu={copy}
       onMouseMove={handleTiltMove}

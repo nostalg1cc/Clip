@@ -474,3 +474,53 @@ img { -webkit-user-drag: none; user-select: none; pointer-events: none; }
 [data-theme="light"] .tone-btn:hover { background: rgba(0, 0, 0, 0.07); }
 [data-theme="light"] .tone-btn.active { background: rgba(0, 0, 0, 0.1); border-color: rgba(0, 0, 0, 0.22); }
 [data-theme="light"] .emoji-btn:hover { background: rgba(0, 0, 0, 0.05); }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   DARK THEME — clip cards get a dark surface with light text
+   (the base card styles above are the light-card look; media/color cards keep
+   their own dark/image backgrounds)
+══════════════════════════════════════════════════════════════════════════════ */
+
+[data-theme="dark"] .card:not(.is-media):not(.is-color) .card-clip {
+  /* a heavily-darkened tint of the card's own header color */
+  background: color-mix(in srgb, var(--header-color, #2a2a32) 24%, #0c0c10);
+}
+[data-theme="dark"] .card-header { box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.07); }
+
+/* Body text */
+[data-theme="dark"] .card-textbody { color: rgba(240, 241, 245, 0.86); }
+[data-theme="dark"] .card-code { color: rgba(240, 241, 245, 0.86); }
+[data-theme="dark"] .card-md { color: rgba(240, 241, 245, 0.84); }
+[data-theme="dark"] .card-md .md-h { color: rgba(245, 246, 250, 0.95); }
+[data-theme="dark"] .card-md code { background: rgba(255, 255, 255, 0.1); }
+[data-theme="dark"] .card-md .md-link { color: rgba(120, 165, 240, 0.9); }
+
+/* JSON / XML syntax — lightened for a dark surface */
+[data-theme="dark"] .card-code .j-key { color: #c8a6ff; }
+[data-theme="dark"] .card-code .j-str { color: #82d69c; }
+[data-theme="dark"] .card-code .j-num { color: #f0a565; }
+[data-theme="dark"] .card-code .j-bool { color: #79b8f0; }
+[data-theme="dark"] .card-code .j-null { color: #b0b0b0; }
+[data-theme="dark"] .card-code .x-tag { color: #7fbce8; }
+
+/* CSV table */
+[data-theme="dark"] .card-csv th, [data-theme="dark"] .card-csv td { border-color: rgba(255, 255, 255, 0.1); }
+[data-theme="dark"] .card-csv th { background: rgba(255, 255, 255, 0.05); color: rgba(240, 241, 245, 0.85); }
+[data-theme="dark"] .card-csv td { color: rgba(240, 241, 245, 0.72); }
+
+/* Contact / path / file / link bodies */
+[data-theme="dark"] .card-contact-value { color: rgba(240, 241, 245, 0.88); }
+[data-theme="dark"] .card-contact-sub { color: rgba(240, 241, 245, 0.42); }
+[data-theme="dark"] .card-path-name { color: rgba(240, 241, 245, 0.88); }
+[data-theme="dark"] .card-path-full { color: rgba(240, 241, 245, 0.5); }
+[data-theme="dark"] .card-file-name { color: rgba(240, 241, 245, 0.88); }
+[data-theme="dark"] .card-file-sub { color: rgba(240, 241, 245, 0.42); }
+[data-theme="dark"] .card-link-domain { color: rgba(240, 241, 245, 0.88); }
+[data-theme="dark"] .card-link-url { color: rgba(120, 165, 240, 0.85); }
+
+/* Footer + action buttons on the dark surface */
+[data-theme="dark"] .card-footer:not(.overlay) .card-meta { color: rgba(240, 241, 245, 0.42); }
+[data-theme="dark"] .card-footer:not(.overlay) .pin-btn { color: rgba(240, 241, 245, 0.4); }
+[data-theme="dark"] .card-footer:not(.overlay) .delete-btn { color: rgba(240, 241, 245, 0.38); }
+[data-theme="dark"] .card-footer:not(.overlay) .open-btn { color: rgba(240, 241, 245, 0.42); }
+[data-theme="dark"] .card-footer:not(.overlay) .pin-btn:hover { background: rgba(255, 255, 255, 0.1); color: rgba(240, 241, 245, 0.82); }
