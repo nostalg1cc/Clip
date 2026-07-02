@@ -221,11 +221,15 @@ fn run_download(app: &AppHandle, id: &str, url: &str, format: &str, quality: &st
         "--no-playlist",
         "--no-part",
         "--force-overwrites",
+        // A plain `--print` implies --simulate + --quiet (downloads nothing and
+        // suppresses progress); --no-simulate forces the real download and a
+        // `when:`-scoped print avoids the implication entirely.
+        "--no-simulate",
         "--newline",
         "--progress-template",
         "PROG:%(progress._percent_str)s",
         "--print",
-        "TITLE:%(title)s",
+        "after_move:TITLE:%(title)s",
         "--ffmpeg-location",
         &ffmpeg_dir.to_string_lossy(),
         "-o",
