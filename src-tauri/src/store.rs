@@ -256,3 +256,94 @@ impl Store {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    fn tmp_store() -> Store {
+        static N: AtomicU32 = AtomicU32::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir()
+            .join(format!("clip-test-{}-{}-{}", std::process::id(), super::super::now_millis(), n));
+        let _ = std::fs::remove_dir_all(&dir);
+        Store::new(dir)
+    }
+
+    /// Add a "download"-style clip: a real file in downloads/{id}.mp4 plus a row
+    /// with an embedded thumbnail. `age_ms` is how far in the past to timestamp it.
+    fn add_download(store: &Store, id: &str, age_ms: u64) -> PathBuf {
+        let dl = store.data_dir.join("downloads");
+        std::fs::create_dir_all(&dl).unwrap();
+        let file = dl.join(format!("{id}.mp4"));
+        std::fs::write(&file, b"fake video bytes").unwrap();
+        let entry = ClipboardEntry {
+            id: id.to_string(),
+            text: "clip".into(),
+            process: "Downloader".into(),
+            process_icon: None,
+            timestamp: super::super::now_millis().saturating_sub(age_ms),
+            char_count: 16,
+            image_data: Some("data:image/jpeg;base64,AAAA".into()),
+            pinned: false,
+            img_w: 0,
+            img_h: 0,
+            name: None,
+            files: Some(vec![file.to_string_lossy().to_string()]),
+        };
+        store.add_clip(&entry);
+        file
+    }
+
+    const DAY: u64 = 24 * 60 * 60 * 1000;
+
+    #[test]
+    fn prune_wipes_unpinned_download_entry_and_file() {
+        let store = tmp_store();
+        let file = add_download(&store, "old1", DAY + 60_000); // >24h old
+        assert!(file.exists(), "file should exist before prune");
+
+        assert!(store.prune_expired(), "prune should report a change");
+
+        assert!(store.find("old1").is_none(), "entry should be gone");
+        assert!(!file.exists(), "downloaded file should be deleted from disk");
+    }
+
+    #[test]
+    fn prune_keeps_pinned_download() {
+        let store = tmp_store();
+        let file = add_download(&store, "keep1", DAY + 60_000);
+        store.toggle_pin("keep1"); // pin it
+
+        store.prune_expired();
+
+        assert!(store.find("keep1").is_some(), "pinned entry should survive");
+        assert!(file.exists(), "pinned file should survive on disk");
+    }
+
+    #[test]
+    fn clear_all_wipes_unpinned_file_but_keeps_pinned() {
+        let store = tmp_store();
+        let gone = add_download(&store, "a", 1000);
+        let kept = add_download(&store, "b", 1000);
+        store.toggle_pin("b");
+
+        store.clear_all();
+
+        assert!(store.find("a").is_none() && !gone.exists(), "unpinned wiped");
+        assert!(store.find("b").is_some() && kept.exists(), "pinned kept");
+    }
+
+    #[test]
+    fn size_cap_eviction_removes_download_file() {
+        let store = tmp_store();
+        // Oldest first so it becomes the overflow victim once we exceed the cap.
+        let victim = add_download(&store, "v", 10_000);
+        for i in 0..(MAX_IMAGE_CLIPS as u32) {
+            add_download(&store, &format!("f{i}"), 5_000 - i as u64);
+        }
+        assert!(store.find("v").is_none(), "oldest entry should be evicted by the cap");
+        assert!(!victim.exists(), "evicted download file should be deleted from disk");
+    }
+}
