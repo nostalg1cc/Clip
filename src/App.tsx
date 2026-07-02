@@ -422,6 +422,11 @@ const ExternalIcon = () => (
     <polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
   </svg>
 );
+const RevealIcon = () => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+  </svg>
+);
 const PlayBadge = () => (
   <svg viewBox="0 0 68 48" width="54" height="40" aria-hidden="true">
     <path d="M66.5 7.7a8 8 0 0 0-5.6-5.7C56 .7 34 .7 34 .7s-22 0-26.9 1.3A8 8 0 0 0 1.5 7.7 83 83 0 0 0 .2 24a83 83 0 0 0 1.3 16.3 8 8 0 0 0 5.6 5.7C12 47.3 34 47.3 34 47.3s22 0 26.9-1.3a8 8 0 0 0 5.6-5.7A83 83 0 0 0 67.8 24a83 83 0 0 0-1.3-16.3z" fill="#f00" />
@@ -731,6 +736,13 @@ function Card({
             {openable && (
               <button className="action-btn open-btn" onClick={(e) => { e.stopPropagation(); openExternal(); }} aria-label="Open">
                 <ExternalIcon />
+              </button>
+            )}
+            {kind === "file" && (
+              <button className="action-btn open-btn"
+                onClick={(e) => { e.stopPropagation(); invoke("reveal_in_explorer", { path: entry.files?.[0] ?? entry.text }); }}
+                aria-label="Open file location">
+                <RevealIcon />
               </button>
             )}
             <PinButton pinned={entry.pinned} onPin={() => onPin(entry.id)} />

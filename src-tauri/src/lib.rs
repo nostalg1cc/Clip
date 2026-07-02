@@ -63,6 +63,7 @@ impl PasteGuard {
 
 struct ThemeState(Mutex<bool>); // true = light
 struct BackdropState(Mutex<bool>); // true = acrylic, false = mica
+struct AlwaysOnTopState(Mutex<bool>); // true = keep the bar above other windows
 
 /// HWND (as isize) of the window that was focused right before we showed the
 /// bar. We restore focus to it before pasting so the keystroke lands in the
@@ -904,6 +905,23 @@ fn open_external(app: tauri::AppHandle, target: String) {
     }
 }
 
+/// Open Explorer with the given file selected (reveal in folder).
+#[tauri::command]
+fn reveal_in_explorer(path: String) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = std::process::Command::new("explorer")
+            .raw_arg(format!("/select,\"{}\"", path))
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+            .spawn();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = path;
+    }
+}
+
 /// Paste a clip by id. Handles both text and image clips, then hides the
 /// window and simulates Ctrl+V into whatever was focused before us.
 #[tauri::command]
@@ -1238,24 +1256,26 @@ fn install_overlay_dismiss(app: &tauri::AppHandle) {
 #[cfg(target_os = "windows")]
 fn show_bar(window: &tauri::WebviewWindow) {
     use windows::Win32::UI::WindowsAndMessaging::{
-        SetWindowPos, ShowWindow, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-        SWP_NOZORDER, SW_SHOWNOACTIVATE,
+        SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+        SWP_NOSIZE, SWP_NOZORDER, SW_SHOWNOACTIVATE,
     };
+    let on_top = *window
+        .state::<AlwaysOnTopState>()
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     if let Ok(hwnd) = window.hwnd() {
         unsafe {
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-            // Force a frame recalculation (without activating/moving) so DWM
-            // re-renders the acrylic/mica backdrop — SW_SHOWNOACTIVATE alone
-            // doesn't trigger the repaint that Tauri's show() used to.
-            let _ = SetWindowPos(
-                hwnd,
-                None,
-                0,
-                0,
-                0,
-                0,
-                SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
-            );
+            // Force a frame recalc (so DWM repaints the backdrop) and, when the
+            // always-on-top flag is set, re-assert TOPMOST z-order so the bar
+            // comes above anything that may have grabbed the top spot.
+            let flags = SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE;
+            if on_top {
+                let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, flags);
+            } else {
+                let _ = SetWindowPos(hwnd, None, 0, 0, 0, 0, flags | SWP_NOZORDER);
+            }
         }
     }
 }
@@ -1374,6 +1394,7 @@ pub fn run() {
             copy_clip,
             copy_text,
             open_external,
+            reveal_in_explorer,
             rename_clip,
             get_history,
             toggle_pin,
@@ -1417,6 +1438,13 @@ pub fn run() {
             );
             app.manage(BackdropState(Mutex::new(acrylic)));
 
+            // Resolve always-on-top: explicit override, else on.
+            let always_on_top = !matches!(
+                app.state::<Store>().get_setting("always_on_top").as_deref(),
+                Some("0")
+            );
+            app.manage(AlwaysOnTopState(Mutex::new(always_on_top)));
+
             // Resolve Win+V override setting
             let win_v_override = matches!(
                 app.state::<Store>().get_setting("win_v_override").as_deref(),
@@ -1445,6 +1473,7 @@ pub fn run() {
 
             if let Some(window) = app.get_webview_window("main") {
                 apply_theme(&window, light);
+                let _ = window.set_always_on_top(always_on_top);
 
                 // Float without stealing focus, and dismiss on click-outside.
                 #[cfg(target_os = "windows")]
@@ -1471,12 +1500,14 @@ pub fn run() {
             let startup_item = CheckMenuItem::with_id(app, "toggle_autostart", "Run at startup", true, autostart_on, None::<&str>)?;
             let light_item = CheckMenuItem::with_id(app, "toggle_theme", "Light mode", true, light, None::<&str>)?;
             let acrylic_item = CheckMenuItem::with_id(app, "toggle_backdrop", "Acrylic", true, acrylic, None::<&str>)?;
+            let ontop_item = CheckMenuItem::with_id(app, "toggle_ontop", "Always on top", true, always_on_top, None::<&str>)?;
             let win_v_item = CheckMenuItem::with_id(app, "toggle_win_v", "Use Win+V", true, win_v_override, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&startup_item, &light_item, &acrylic_item, &win_v_item, &quit])?;
+            let menu = Menu::with_items(app, &[&startup_item, &light_item, &acrylic_item, &ontop_item, &win_v_item, &quit])?;
             let li = light_item.clone();
             let si = startup_item.clone();
             let ai = acrylic_item.clone();
+            let oi = ontop_item.clone();
             let wi = win_v_item.clone();
             let tooltip = if win_v_override { "Clip — Win+V" } else { "Clip — Shift+Alt+V" };
             TrayIconBuilder::new()
@@ -1514,6 +1545,19 @@ pub fn run() {
                                 val
                             };
                             apply_backdrop(&window, light, new_acrylic);
+                        }
+                    }
+                    "toggle_ontop" => {
+                        let new_ontop = {
+                            let s = app.state::<AlwaysOnTopState>();
+                            let mut cur = s.0.lock().unwrap_or_else(|e| e.into_inner());
+                            *cur = !*cur;
+                            *cur
+                        };
+                        let _ = oi.set_checked(new_ontop);
+                        app.state::<Store>().set_setting("always_on_top", if new_ontop { "1" } else { "0" });
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.set_always_on_top(new_ontop);
                         }
                     }
                     "toggle_win_v" => {
