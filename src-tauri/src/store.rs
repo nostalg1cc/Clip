@@ -163,6 +163,7 @@ impl Store {
         };
         for id in &overflow {
             self.remove_image_file(id);
+            self.remove_download_file(id);
             let _ = conn.execute("DELETE FROM clips WHERE id=?1", params![id]);
         }
     }
