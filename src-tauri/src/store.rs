@@ -100,6 +100,20 @@ impl Store {
         let _ = std::fs::remove_file(self.image_path(id));
     }
 
+    /// Remove a downloaded media file (downloads/{id}.*), if any. No-op for
+    /// non-download clips.
+    pub fn remove_download_file(&self, id: &str) {
+        let dir = self.data_dir.join("downloads");
+        let prefix = format!("{id}.");
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                if entry.file_name().to_string_lossy().starts_with(&prefix) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+
     /// One-time import of the legacy clips.json, then archive it.
     fn migrate_from_json(&self) {
         let json_path = self.data_dir.join("clips.json");
@@ -163,6 +177,7 @@ impl Store {
 
     pub fn delete_clip(&self, id: &str) {
         self.remove_image_file(id);
+        self.remove_download_file(id);
         let _ = self.lock().execute("DELETE FROM clips WHERE id = ?1", params![id]);
     }
 
@@ -181,7 +196,7 @@ impl Store {
                 .unwrap_or_default(),
             Err(_) => Vec::new(),
         };
-        for id in &ids { self.remove_image_file(id); }
+        for id in &ids { self.remove_image_file(id); self.remove_download_file(id); }
         let _ = conn.execute("DELETE FROM clips WHERE pinned=0", []);
     }
 
@@ -198,7 +213,7 @@ impl Store {
                 .unwrap_or_default(),
             Err(_) => Vec::new(),
         };
-        for id in &ids { self.remove_image_file(id); }
+        for id in &ids { self.remove_image_file(id); self.remove_download_file(id); }
         let n = conn
             .execute("DELETE FROM clips WHERE pinned=0 AND timestamp < ?1", params![cutoff])
             .unwrap_or(0);

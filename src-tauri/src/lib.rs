@@ -15,18 +15,20 @@ use std::ffi::c_void;
 mod store;
 use store::{ClipboardEntry, Store};
 
+mod downloader;
+
 const BAR_HEIGHT_LOGICAL: f64 = 400.0;
 const MAX_TEXT_LEN: usize = 100_000;
 const IMG_MAX_DIM: u32 = 900;
 
-fn now_millis() -> u64 {
+pub(crate) fn now_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
 }
 
-fn new_id() -> String {
+pub(crate) fn new_id() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -1379,7 +1381,10 @@ pub fn run() {
             clear_history,
             get_theme,
             focus_search,
-            hide_window
+            hide_window,
+            downloader::downloader_ready,
+            downloader::setup_downloader,
+            downloader::start_download
         ])
         .setup(|app| {
             // Store — must be managed before the watcher starts

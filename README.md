@@ -10,6 +10,7 @@ Press a shortcut, a translucent bar slides up from the bottom of the screen with
 - **Never steals focus** — the bar floats as a non-activating overlay, so clicking a clip pastes into your real target without dismissing focus-sensitive popups (password managers, browser autofill, etc.).
 - **Pin, rename, search** — pin clips to keep them, rename them, and type to search across everything.
 - **Emoji picker** — a built-in emoji tab with search, skin-tone selection, and recents.
+- **Downloader** — a Downloader tab: paste any [yt-dlp](https://github.com/yt-dlp/yt-dlp)-supported link (YouTube, X/Twitter, and ~1800 sites), pick MP4/MP3 + quality, and optionally compress video to a target size (e.g. Discord's 10 MB). Finished downloads appear as pasteable clips. yt-dlp + ffmpeg are fetched on first use. *Downloads are your responsibility — respect each site's terms and copyright.*
 - **Acrylic / Mica backdrop** — a translucent Windows backdrop with light/dark themes, toggleable from the tray.
 - **Global shortcut** — open with **Shift+Alt+V** by default, or optionally hijack **Win+V** to replace the built-in Windows clipboard history.
 - **Local & private** — history lives in a local SQLite database in your app-data folder. Nothing leaves your machine.

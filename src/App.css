@@ -524,3 +524,89 @@ img { -webkit-user-drag: none; user-select: none; pointer-events: none; }
 [data-theme="dark"] .card-footer:not(.overlay) .delete-btn { color: rgba(240, 241, 245, 0.38); }
 [data-theme="dark"] .card-footer:not(.overlay) .open-btn { color: rgba(240, 241, 245, 0.42); }
 [data-theme="dark"] .card-footer:not(.overlay) .pin-btn:hover { background: rgba(255, 255, 255, 0.1); color: rgba(240, 241, 245, 0.82); }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   DOWNLOADER TAB
+══════════════════════════════════════════════════════════════════════════════ */
+
+.cards-row.is-downloader {
+  padding: 10px 18px 18px; overflow: hidden; cursor: default;
+  -webkit-mask-image: none; mask-image: none;
+}
+.downloader { flex: 1; display: flex; flex-direction: row; gap: 18px; min-height: 0; width: 100%; }
+
+.dl-left {
+  width: 290px; flex-shrink: 0; display: flex; flex-direction: column; gap: 10px;
+  overflow-y: auto; padding-right: 4px;
+}
+.dl-url {
+  background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 9px; padding: 9px 12px; color: rgba(255, 255, 255, 0.92);
+  font-family: inherit; font-size: 13px; outline: none;
+}
+.dl-url::placeholder { color: rgba(255, 255, 255, 0.4); }
+.dl-url:focus { border-color: rgba(255, 255, 255, 0.34); }
+
+.dl-seg-row { display: flex; gap: 6px; }
+.dl-seg {
+  flex: 1; background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.6); border-radius: 8px; padding: 7px 0; cursor: pointer;
+  font-family: inherit; font-size: 12.5px; font-weight: 600; transition: background 0.14s ease, color 0.14s ease;
+}
+.dl-seg:hover { background: rgba(255, 255, 255, 0.12); }
+.dl-seg.on { background: rgba(90, 150, 255, 0.3); border-color: rgba(120, 170, 255, 0.5); color: #fff; }
+
+.dl-field { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: rgba(255, 255, 255, 0.6); }
+.dl-field select {
+  flex: 1; max-width: 165px; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.9); border-radius: 7px; padding: 6px 8px; font-family: inherit; font-size: 12px; outline: none; cursor: pointer;
+}
+.dl-field select option { background: #1c1c22; color: #eee; }
+
+.dl-btn {
+  background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.16);
+  color: rgba(255, 255, 255, 0.9); border-radius: 9px; padding: 9px 0; cursor: pointer;
+  font-family: inherit; font-size: 13px; font-weight: 600; transition: background 0.14s ease;
+}
+.dl-btn:hover { background: rgba(255, 255, 255, 0.16); }
+.dl-btn.primary { background: rgba(88, 148, 255, 0.9); border-color: transparent; color: #fff; }
+.dl-btn.primary:hover { background: rgba(104, 160, 255, 1); }
+.dl-btn:disabled { opacity: 0.4; cursor: default; }
+
+.dl-jobs { display: flex; flex-direction: column; gap: 9px; margin-top: 4px; }
+.dl-job { display: flex; flex-direction: column; gap: 4px; }
+.dl-job-bar { height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+.dl-job-fill { height: 100%; background: rgba(110, 165, 255, 0.95); border-radius: 3px; transition: width 0.2s ease; }
+.dl-job-label { font-size: 11px; color: rgba(255, 255, 255, 0.55); }
+.dl-job.err .dl-job-fill { background: rgba(220, 80, 70, 0.9); }
+.dl-job.err .dl-job-label { color: rgba(240, 150, 140, 0.9); }
+
+.dl-setup { display: flex; flex-direction: column; gap: 10px; padding: 8px 2px; align-items: flex-start; }
+.dl-setup-title { font-size: 14px; font-weight: 700; color: rgba(255, 255, 255, 0.9); }
+.dl-setup-text { font-size: 12px; line-height: 1.5; color: rgba(255, 255, 255, 0.55); }
+.dl-spinner {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2.5px solid rgba(255, 255, 255, 0.15); border-top-color: rgba(120, 170, 255, 0.9);
+  animation: dl-spin 0.8s linear infinite;
+}
+@keyframes dl-spin { to { transform: rotate(360deg); } }
+
+.dl-right {
+  flex: 1; display: flex; flex-direction: row; align-items: stretch; gap: 14px;
+  overflow-x: auto; overflow-y: hidden; min-width: 0; scrollbar-width: none;
+}
+.dl-right::-webkit-scrollbar { display: none; }
+.dl-right .empty-state { align-self: center; }
+
+/* Light-theme adjustments */
+[data-theme="light"] .dl-url,
+[data-theme="light"] .dl-field select,
+[data-theme="light"] .dl-btn { color: rgba(0, 0, 0, 0.85); background: rgba(0, 0, 0, 0.05); border-color: rgba(0, 0, 0, 0.12); }
+[data-theme="light"] .dl-url::placeholder { color: rgba(0, 0, 0, 0.4); }
+[data-theme="light"] .dl-field { color: rgba(0, 0, 0, 0.6); }
+[data-theme="light"] .dl-seg { color: rgba(0, 0, 0, 0.6); background: rgba(0, 0, 0, 0.05); border-color: rgba(0, 0, 0, 0.1); }
+[data-theme="light"] .dl-seg.on { color: #fff; background: rgba(70, 130, 240, 0.9); border-color: transparent; }
+[data-theme="light"] .dl-setup-title { color: rgba(0, 0, 0, 0.85); }
+[data-theme="light"] .dl-setup-text,
+[data-theme="light"] .dl-job-label { color: rgba(0, 0, 0, 0.55); }
+[data-theme="light"] .dl-btn.primary { color: #fff; background: rgba(70, 130, 240, 0.92); }
