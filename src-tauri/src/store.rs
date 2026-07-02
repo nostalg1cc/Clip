@@ -187,8 +187,9 @@ impl Store {
 
     pub fn clear_all(&self) {
         let conn = self.lock();
+        // All unpinned ids, so we can remove any backing image/download files.
         let ids: Vec<String> = match conn
-            .prepare("SELECT id FROM clips WHERE pinned=0 AND image_data IS NOT NULL")
+            .prepare("SELECT id FROM clips WHERE pinned=0")
         {
             Ok(mut stmt) => stmt
                 .query_map([], |r| r.get::<_, String>(0))
@@ -205,7 +206,7 @@ impl Store {
         let cutoff = super::now_millis().saturating_sub(CLIP_TTL_MS) as i64;
         let conn = self.lock();
         let ids: Vec<String> = match conn.prepare(
-            "SELECT id FROM clips WHERE pinned=0 AND image_data IS NOT NULL AND timestamp < ?1",
+            "SELECT id FROM clips WHERE pinned=0 AND timestamp < ?1",
         ) {
             Ok(mut stmt) => stmt
                 .query_map(params![cutoff], |r| r.get::<_, String>(0))
