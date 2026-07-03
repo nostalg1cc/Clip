@@ -58,7 +58,7 @@ img { -webkit-user-drag: none; user-select: none; pointer-events: none; }
   color: rgba(255, 255, 255, 0.78); white-space: nowrap;
 }
 
-.top-bar-tabs { display: flex; align-items: center; gap: 3px; flex: 1; overflow-x: auto; scrollbar-width: none; }
+.top-bar-tabs { display: flex; align-items: center; justify-content: center; gap: 3px; flex: 1; overflow-x: auto; scrollbar-width: none; }
 .top-bar-tabs::-webkit-scrollbar { display: none; }
 .tab-btn {
   display: flex; align-items: center;
@@ -481,49 +481,57 @@ img { -webkit-user-drag: none; user-select: none; pointer-events: none; }
    their own dark/image backgrounds)
 ══════════════════════════════════════════════════════════════════════════════ */
 
-[data-theme="dark"] .card:not(.is-media):not(.is-color) .card-clip {
-  /* a heavily-darkened tint of the card's own header color */
-  background: color-mix(in srgb, var(--header-color, #2a2a32) 24%, #0c0c10);
+.card:not(.is-media):not(.is-color) .card-clip {
+  /* single two-tone gradient: a deepened shade of the card's own color up top,
+     the true header color at the bottom — no separate header band.
+     Mixing in oklch (not srgb) keeps the hue intact as it darkens, so an
+     orange header gives a deep orange top instead of fading toward grey/black. */
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklch, var(--header-color, #2a2a32) 55%, black) 0%,
+    var(--header-color, #2a2a32) 100%
+  );
 }
-[data-theme="dark"] .card-header { box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.07); }
+/* the header now sits directly on the gradient — no fill, no divider */
+.card:not(.is-media) .card-header { box-shadow: none; }
 
 /* Body text */
-[data-theme="dark"] .card-textbody { color: rgba(240, 241, 245, 0.86); }
-[data-theme="dark"] .card-code { color: rgba(240, 241, 245, 0.86); }
-[data-theme="dark"] .card-md { color: rgba(240, 241, 245, 0.84); }
-[data-theme="dark"] .card-md .md-h { color: rgba(245, 246, 250, 0.95); }
-[data-theme="dark"] .card-md code { background: rgba(255, 255, 255, 0.1); }
-[data-theme="dark"] .card-md .md-link { color: rgba(120, 165, 240, 0.9); }
+.card-textbody { color: rgba(240, 241, 245, 0.86); }
+.card-code { color: rgba(240, 241, 245, 0.86); }
+.card-md { color: rgba(240, 241, 245, 0.84); }
+.card-md .md-h { color: rgba(245, 246, 250, 0.95); }
+.card-md code { background: rgba(255, 255, 255, 0.1); }
+.card-md .md-link { color: rgba(120, 165, 240, 0.9); }
 
 /* JSON / XML syntax — lightened for a dark surface */
-[data-theme="dark"] .card-code .j-key { color: #c8a6ff; }
-[data-theme="dark"] .card-code .j-str { color: #82d69c; }
-[data-theme="dark"] .card-code .j-num { color: #f0a565; }
-[data-theme="dark"] .card-code .j-bool { color: #79b8f0; }
-[data-theme="dark"] .card-code .j-null { color: #b0b0b0; }
-[data-theme="dark"] .card-code .x-tag { color: #7fbce8; }
+.card-code .j-key { color: #c8a6ff; }
+.card-code .j-str { color: #82d69c; }
+.card-code .j-num { color: #f0a565; }
+.card-code .j-bool { color: #79b8f0; }
+.card-code .j-null { color: #b0b0b0; }
+.card-code .x-tag { color: #7fbce8; }
 
 /* CSV table */
-[data-theme="dark"] .card-csv th, [data-theme="dark"] .card-csv td { border-color: rgba(255, 255, 255, 0.1); }
-[data-theme="dark"] .card-csv th { background: rgba(255, 255, 255, 0.05); color: rgba(240, 241, 245, 0.85); }
-[data-theme="dark"] .card-csv td { color: rgba(240, 241, 245, 0.72); }
+.card-csv th, .card-csv td { border-color: rgba(255, 255, 255, 0.1); }
+.card-csv th { background: rgba(255, 255, 255, 0.05); color: rgba(240, 241, 245, 0.85); }
+.card-csv td { color: rgba(240, 241, 245, 0.72); }
 
 /* Contact / path / file / link bodies */
-[data-theme="dark"] .card-contact-value { color: rgba(240, 241, 245, 0.88); }
-[data-theme="dark"] .card-contact-sub { color: rgba(240, 241, 245, 0.42); }
-[data-theme="dark"] .card-path-name { color: rgba(240, 241, 245, 0.88); }
-[data-theme="dark"] .card-path-full { color: rgba(240, 241, 245, 0.5); }
-[data-theme="dark"] .card-file-name { color: rgba(240, 241, 245, 0.88); }
-[data-theme="dark"] .card-file-sub { color: rgba(240, 241, 245, 0.42); }
-[data-theme="dark"] .card-link-domain { color: rgba(240, 241, 245, 0.88); }
-[data-theme="dark"] .card-link-url { color: rgba(120, 165, 240, 0.85); }
+.card-contact-value { color: rgba(240, 241, 245, 0.88); }
+.card-contact-sub { color: rgba(240, 241, 245, 0.42); }
+.card-path-name { color: rgba(240, 241, 245, 0.88); }
+.card-path-full { color: rgba(240, 241, 245, 0.5); }
+.card-file-name { color: rgba(240, 241, 245, 0.88); }
+.card-file-sub { color: rgba(240, 241, 245, 0.42); }
+.card-link-domain { color: rgba(240, 241, 245, 0.88); }
+.card-link-url { color: rgba(120, 165, 240, 0.85); }
 
 /* Footer + action buttons on the dark surface */
-[data-theme="dark"] .card-footer:not(.overlay) .card-meta { color: rgba(240, 241, 245, 0.42); }
-[data-theme="dark"] .card-footer:not(.overlay) .pin-btn { color: rgba(240, 241, 245, 0.4); }
-[data-theme="dark"] .card-footer:not(.overlay) .delete-btn { color: rgba(240, 241, 245, 0.38); }
-[data-theme="dark"] .card-footer:not(.overlay) .open-btn { color: rgba(240, 241, 245, 0.42); }
-[data-theme="dark"] .card-footer:not(.overlay) .pin-btn:hover { background: rgba(255, 255, 255, 0.1); color: rgba(240, 241, 245, 0.82); }
+.card-footer:not(.overlay) .card-meta { color: rgba(240, 241, 245, 0.42); }
+.card-footer:not(.overlay) .pin-btn { color: rgba(240, 241, 245, 0.4); }
+.card-footer:not(.overlay) .delete-btn { color: rgba(240, 241, 245, 0.38); }
+.card-footer:not(.overlay) .open-btn { color: rgba(240, 241, 245, 0.42); }
+.card-footer:not(.overlay) .pin-btn:hover { background: rgba(255, 255, 255, 0.1); color: rgba(240, 241, 245, 0.82); }
 
 /* ══════════════════════════════════════════════════════════════════════════════
    DOWNLOADER TAB

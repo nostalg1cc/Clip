@@ -198,30 +198,6 @@ fn write_clip_reg(name: &str, val: &str) {
     }
 }
 
-/// Keep trying to grab Win+V in the background.
-///
-/// Explorer only stops owning Win+V after it restarts (or the user signs back
-/// in), so an immediate `register` right after we edit the registry usually
-/// fails. This retries so the hotkey is claimed the moment Explorer lets go —
-/// no app relaunch required.
-#[cfg(target_os = "windows")]
-fn register_win_v_with_retry(app: &tauri::AppHandle) {
-    let app = app.clone();
-    thread::spawn(move || {
-        for attempt in 0..180u32 {
-            let probe = Shortcut::new(Some(Modifiers::SUPER), Code::KeyV);
-            if app.global_shortcut().is_registered(probe) {
-                return;
-            }
-            let sc = Shortcut::new(Some(Modifiers::SUPER), Code::KeyV);
-            if app.global_shortcut().register(sc).is_ok() {
-                return;
-            }
-            thread::sleep(Duration::from_secs(if attempt < 20 { 1 } else { 5 }));
-        }
-    });
-}
-
 /// Show a native, always-visible message box on its own thread (non-blocking).
 #[cfg(target_os = "windows")]
 fn message_box(title: &str, text: &str) {
@@ -245,81 +221,54 @@ fn message_box(title: &str, text: &str) {
     });
 }
 
+/// Undo the legacy DisabledHotkeys "V" that older Clip versions wrote, so the
+/// Windows clipboard-history popup works again once the override is off.
 #[cfg(target_os = "windows")]
-fn update_win_v_override(app: &tauri::AppHandle, enabled: bool) {
-    let win_v = Shortcut::new(Some(Modifiers::SUPER), Code::KeyV);
-
-    if enabled {
-        // Free Win+V from Explorer by adding "V" to DisabledHotkeys, backing up
-        // the original so we can restore it on disable/uninstall.
-        match get_registry_disabled_hotkeys() {
-            Some(curr) if curr.contains('V') || curr.contains('v') => {
-                // Explorer already ignores Win+V — record the value verbatim so
-                // we never strip a "V" the user put there themselves.
-                app.state::<Store>().set_setting("disabled_hotkeys_backup", &curr);
-                write_clip_reg("DisabledHotkeysBackup", &curr);
-            }
-            Some(curr) => {
-                app.state::<Store>().set_setting("disabled_hotkeys_backup", &curr);
-                write_clip_reg("DisabledHotkeysBackup", &curr);
-                let _ = set_registry_disabled_hotkeys(&format!("{curr}V"));
-            }
-            None => {
-                app.state::<Store>().set_setting("disabled_hotkeys_backup", "");
-                write_clip_reg("DisabledHotkeysBackup", "__NONE__");
-                let _ = set_registry_disabled_hotkeys("V");
-            }
+fn restore_disabled_hotkeys(app: &tauri::AppHandle) {
+    match app.state::<Store>().get_setting("disabled_hotkeys_backup").as_deref() {
+        Some(val) if !val.is_empty() && val != "__NONE__" => {
+            let _ = set_registry_disabled_hotkeys(val);
         }
-        write_clip_reg("WinVOverride", "1");
-
-        // Try immediately (works once Explorer has released it); otherwise keep
-        // retrying in the background. Shift+Alt+V stays registered throughout, so
-        // the app is always reachable even before Explorer restarts.
-        if app.global_shortcut().register(win_v).is_err() {
-            register_win_v_with_retry(app);
+        Some(_) => {
+            let _ = delete_registry_disabled_hotkeys();
         }
-
-        message_box(
-            "Clip — Win+V enabled",
-            "Win+V will open Clip after Windows Explorer restarts.\n\n\
-             To apply it now: open Task Manager, right-click \"Windows Explorer\" \
-             and choose Restart — or simply sign out and back in.\n\n\
-             Until then, Shift+Alt+V still opens Clip.",
-        );
-    } else {
-        // Restore the original DisabledHotkeys from our backup.
-        match app.state::<Store>().get_setting("disabled_hotkeys_backup").as_deref() {
-            // A real original value was saved — put it back exactly.
-            Some(val) if !val.is_empty() && val != "__NONE__" => {
-                let _ = set_registry_disabled_hotkeys(val);
-            }
-            // Originally empty / absent ("" or "__NONE__") — remove the value.
-            Some(_) => {
-                let _ = delete_registry_disabled_hotkeys();
-            }
-            // No backup recorded (shouldn't happen) — best effort: strip our V.
-            None => {
-                if let Some(curr) = get_registry_disabled_hotkeys() {
-                    let stripped: String = curr.chars().filter(|&c| c != 'V').collect();
-                    if stripped.is_empty() {
-                        let _ = delete_registry_disabled_hotkeys();
-                    } else {
-                        let _ = set_registry_disabled_hotkeys(&stripped);
-                    }
+        None => {
+            if let Some(curr) = get_registry_disabled_hotkeys() {
+                let stripped: String = curr.chars().filter(|&c| c != 'V').collect();
+                if stripped.is_empty() {
+                    let _ = delete_registry_disabled_hotkeys();
+                } else {
+                    let _ = set_registry_disabled_hotkeys(&stripped);
                 }
             }
         }
-        write_clip_reg("WinVOverride", "0");
-        let _ = app.global_shortcut().unregister(win_v);
-
-        message_box(
-            "Clip — Win+V restored",
-            "Win+V has been returned to Windows.\n\n\
-             Restart Windows Explorer (Task Manager \u{2192} Restart) or sign out \
-             and back in to get the Windows clipboard history back.\n\n\
-             Clip still opens with Shift+Alt+V.",
-        );
     }
+}
+
+/// Enable/disable the Win+V override. This just flips an atomic the low-level
+/// keyboard hook reads — no registry edits, no Explorer restart, and it survives
+/// reboots because the hook is (re)installed every time the app starts.
+#[cfg(target_os = "windows")]
+fn update_win_v_override(app: &tauri::AppHandle, enabled: bool) {
+    use std::sync::atomic::Ordering;
+    WIN_V_OVERRIDE.store(enabled, Ordering::Relaxed);
+    write_clip_reg("WinVOverride", if enabled { "1" } else { "0" });
+
+    if !enabled {
+        // Clean up the registry hack a previous version may have left behind.
+        restore_disabled_hotkeys(app);
+    }
+
+    message_box(
+        if enabled { "Clip — Win+V enabled" } else { "Clip — Win+V restored" },
+        if enabled {
+            "Win+V now opens Clip — and it stays that way across reboots.\n\n\
+             (While enabled, the Windows clipboard-history popup is suppressed.)"
+        } else {
+            "Win+V has been returned to the Windows clipboard history.\n\n\
+             Clip still opens with Shift+Alt+V."
+        },
+    );
 }
 
 fn encode_wide(s: &str) -> Vec<u16> {
@@ -954,12 +903,47 @@ fn paste_text(
 
 // ── Clipboard watcher ─────────────────────────────────────────────────────────
 
+/// Supervisor: runs the watcher, and if it ever panics or exits, restarts it
+/// after a backoff instead of silently leaving clipboard capture dead for the
+/// rest of the session. Backoff resets after a sustained healthy run so a rare
+/// transient failure doesn't leave long waits baked in.
 fn start_clipboard_watcher(app: tauri::AppHandle) {
     thread::spawn(move || {
-        let mut clipboard = match arboard::Clipboard::new() {
-            Ok(c) => c,
-            Err(_) => return,
-        };
+        let mut backoff = Duration::from_secs(1);
+        loop {
+            let app_c = app.clone();
+            let started = std::time::Instant::now();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_clipboard_watcher(&app_c);
+            }));
+            if let Err(e) = result {
+                let msg = e
+                    .downcast_ref::<&str>()
+                    .map(|s| s.to_string())
+                    .or_else(|| e.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown panic".to_string());
+                eprintln!("clipboard watcher panicked ({msg}) — restarting in {backoff:?}");
+            } else {
+                eprintln!("clipboard watcher exited — restarting in {backoff:?}");
+            }
+
+            if started.elapsed() > Duration::from_secs(60) {
+                backoff = Duration::from_secs(1); // ran fine for a while — don't punish it
+            }
+            thread::sleep(backoff);
+            backoff = (backoff * 2).min(Duration::from_secs(30));
+        }
+    });
+}
+
+/// Poll the system clipboard and turn new content into clips. Returns only if
+/// the clipboard becomes permanently unavailable (arboard::Clipboard::new()
+/// fails) — the supervisor above decides whether/when to retry.
+fn run_clipboard_watcher(app: &tauri::AppHandle) {
+    let mut clipboard = match arboard::Clipboard::new() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
 
         #[cfg(target_os = "windows")]
         let mut last_seq: u32 = clipboard_seq();
@@ -1136,9 +1120,7 @@ fn start_clipboard_watcher(app: tauri::AppHandle) {
                 let _ = app.emit("clipboard-new", entry);
             }
         }
-    });
-}
-
+    }
 // ── No-activate overlay + click-outside dismissal (Windows) ───────────────────
 //
 // The bar floats without ever becoming the foreground window (WS_EX_NOACTIVATE),
@@ -1152,6 +1134,13 @@ fn start_clipboard_watcher(app: tauri::AppHandle) {
 static OVERLAY_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 #[cfg(target_os = "windows")]
 static DISMISS_TX: std::sync::OnceLock<std::sync::mpsc::Sender<()>> = std::sync::OnceLock::new();
+/// When true, a low-level keyboard hook intercepts Win+V and opens Clip instead
+/// of the Windows clipboard. This is how the override survives reboots — it needs
+/// nothing but the app running (no registry/Explorer-restart/RegisterHotKey race).
+#[cfg(target_os = "windows")]
+static WIN_V_OVERRIDE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(target_os = "windows")]
+static TOGGLE_TX: std::sync::OnceLock<std::sync::mpsc::Sender<()>> = std::sync::OnceLock::new();
 
 /// Add or remove WS_EX_NOACTIVATE. On by default (float without focus); the
 /// front-end turns it off via `focus_search` when the user clicks the search
@@ -1212,28 +1201,86 @@ unsafe extern "system" fn mouse_hook_proc(
     CallNextHookEx(None, code, wparam, lparam)
 }
 
-/// Install the click-outside hook (own thread + message pump) and the consumer
-/// thread that hides the bar when the hook fires.
+/// Marker put on the synthetic Ctrl tap we inject to mask the Start menu, so our
+/// own hook ignores it.
+#[cfg(target_os = "windows")]
+const INJECT_MARKER: usize = 0x43_4C_49_50; // "CLIP"
+
+/// Low-level keyboard hook: when the Win+V override is on, swallow Win+V and
+/// signal a window toggle instead of letting Windows open its clipboard history.
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn keyboard_hook_proc(
+    code: i32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    use std::sync::atomic::Ordering;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
+        KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_CONTROL, VK_LWIN, VK_RWIN,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CallNextHookEx, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, WM_KEYDOWN, WM_SYSKEYDOWN,
+    };
+
+    if code == HC_ACTION as i32 && WIN_V_OVERRIDE.load(Ordering::Relaxed) {
+        let msg = wparam.0 as u32;
+        if msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN {
+            let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
+            let injected = (kb.flags.0 & LLKHF_INJECTED.0) != 0;
+            let win_down = (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000) != 0
+                || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000) != 0;
+            if !injected && kb.vkCode == 0x56 /* 'V' */ && win_down {
+                if let Some(tx) = TOGGLE_TX.get() {
+                    let _ = tx.send(());
+                }
+                // Mask the lone-Win keyup so the Start menu doesn't pop.
+                let ctrl = [
+                    INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_CONTROL, wScan: 0, dwFlags: KEYBD_EVENT_FLAGS(0), time: 0, dwExtraInfo: INJECT_MARKER } } },
+                    INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_CONTROL, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: INJECT_MARKER } } },
+                ];
+                SendInput(&ctrl, std::mem::size_of::<INPUT>() as i32);
+                return windows::Win32::Foundation::LRESULT(1); // swallow
+            }
+        }
+    }
+    CallNextHookEx(None, code, wparam, lparam)
+}
+
+/// Install the low-level mouse + keyboard hooks (own thread + message pump) and
+/// the consumer threads that hide / toggle the bar when they fire.
 #[cfg(target_os = "windows")]
 fn install_overlay_dismiss(app: &tauri::AppHandle) {
     use windows::Win32::UI::WindowsAndMessaging::{
-        DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage, MSG, WH_MOUSE_LL,
+        DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage, MSG, WH_KEYBOARD_LL,
+        WH_MOUSE_LL,
     };
 
-    let (tx, rx) = std::sync::mpsc::channel::<()>();
-    let _ = DISMISS_TX.set(tx);
+    let (dtx, drx) = std::sync::mpsc::channel::<()>();
+    let _ = DISMISS_TX.set(dtx);
+    let (ttx, trx) = std::sync::mpsc::channel::<()>();
+    let _ = TOGGLE_TX.set(ttx);
 
     let app_c = app.clone();
     thread::spawn(move || {
-        while rx.recv().is_ok() {
+        while drx.recv().is_ok() {
             if let Some(window) = app_c.get_webview_window("main") {
                 hide_bar(&window);
             }
         }
     });
 
+    let app_t = app.clone();
+    thread::spawn(move || {
+        while trx.recv().is_ok() {
+            toggle_window(&app_t);
+        }
+    });
+
     thread::spawn(|| unsafe {
-        if SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), None, 0).is_err() {
+        let _mouse = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), None, 0);
+        let _kbd = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), None, 0);
+        if _mouse.is_err() && _kbd.is_err() {
             return;
         }
         let mut msg = MSG::default();
@@ -1300,27 +1347,34 @@ fn hide_bar(window: &tauri::WebviewWindow) {
     let _ = window.hide();
 }
 
+/// Show the bar at the active monitor, regardless of current visibility. Used
+/// by the hotkey/tray-click toggle (when hidden) and by the single-instance
+/// handler (a second launch attempt should surface the running app, not no-op).
+fn reveal_window(app: &tauri::AppHandle, window: &tauri::WebviewWindow) {
+    // Remember who had focus so we can paste back into it later.
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+        let hwnd = unsafe { GetForegroundWindow() };
+        *app.state::<PrevForeground>().0.lock().unwrap_or_else(|e| e.into_inner()) =
+            hwnd.0 as isize;
+        // Re-assert non-activating in case a prior search turned it off.
+        set_no_activate(window, true);
+    }
+    position_on_active_monitor(window);
+    show_bar(window);
+    // SW_SHOWNOACTIVATE skips the repaint that would render the DWM backdrop,
+    // so re-assert it now that the window is visible.
+    reassert_backdrop(window);
+}
+
 fn toggle_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let visible = window.is_visible().unwrap_or(false);
         if visible {
             hide_bar(&window);
         } else {
-            // Remember who had focus so we can paste back into it later.
-            #[cfg(target_os = "windows")]
-            {
-                use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
-                let hwnd = unsafe { GetForegroundWindow() };
-                *app.state::<PrevForeground>().0.lock().unwrap_or_else(|e| e.into_inner()) =
-                    hwnd.0 as isize;
-                // Re-assert non-activating in case a prior search turned it off.
-                set_no_activate(&window, true);
-            }
-            position_on_active_monitor(&window);
-            show_bar(&window);
-            // SW_SHOWNOACTIVATE skips the repaint that would render the DWM
-            // backdrop, so re-assert it now that the window is visible.
-            reassert_backdrop(&window);
+            reveal_window(app, &window);
         }
     }
 }
@@ -1368,7 +1422,20 @@ fn position_on_active_monitor(window: &tauri::WebviewWindow) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // Must be the first plugin registered. If a second instance is launched
+    // (double-click the Start Menu entry, etc.) this intercepts it and asks the
+    // already-running instance to surface itself instead of letting two copies
+    // run side by side (duplicate tray icons, two clipboard watchers racing).
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        if let Some(window) = app.get_webview_window("main") {
+            reveal_window(app, &window);
+        }
+    }));
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -1459,16 +1526,13 @@ pub fn run() {
                 eprintln!("Failed to register global shortcut Shift+Alt+V: {:?}", e);
             }
 
-            // If the Win+V override was left on, also claim Win+V. It only becomes
-            // free once Explorer restarts, so retry in the background until it does.
+            // Win+V override is handled by the low-level keyboard hook installed
+            // below — just prime the flag it reads. This is what makes it persist
+            // across reboots (no registry / Explorer-restart / hotkey race).
             #[cfg(target_os = "windows")]
             {
-                if win_v_override {
-                    let win_v = Shortcut::new(Some(Modifiers::SUPER), Code::KeyV);
-                    if app.global_shortcut().register(win_v).is_err() {
-                        register_win_v_with_retry(app.handle());
-                    }
-                }
+                use std::sync::atomic::Ordering;
+                WIN_V_OVERRIDE.store(win_v_override, Ordering::Relaxed);
             }
 
             if let Some(window) = app.get_webview_window("main") {

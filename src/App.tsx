@@ -700,7 +700,7 @@ function Card({
         {isMedia && <div className="card-media"><img className="card-media-img" src={mediaSrc} alt="" draggable={false} /></div>}
         {isMedia && yt && <div className="card-play"><PlayBadge /></div>}
 
-        <div className={`card-header${isMedia ? " overlay" : ""}`} style={isMedia ? undefined : { background: headerColor }}>
+        <div className={`card-header${isMedia ? " overlay" : ""}`}>
           <div className="card-header-main" onClick={(e) => e.stopPropagation()} onDoubleClick={startEdit}>
             {editing ? (
               <input
