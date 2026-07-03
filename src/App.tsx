@@ -2,8 +2,33 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { SearchBox, TabList, Tab, Button } from "@fluentui/react-components";
+import hljs from "highlight.js"; // full build — ~190 languages, auto-detected
 import { EMOJI_CATEGORIES, ALL_EMOJI_ITEMS, SKIN_TONES, applyTone } from "./emojis";
 import "./App.css";
+
+// Verse (Epic's UEFN language) isn't in highlight.js — register a lightweight
+// grammar so it highlights too. Keywords/specifiers/strings/comments/numbers.
+hljs.registerLanguage("verse", (hl) => ({
+  name: "Verse",
+  keywords: {
+    keyword:
+      "if then else for do while loop return break continue yield defer spawn branch race rush sync " +
+      "case block using import module class struct enum interface var set option where and or not of " +
+      "type extends super external",
+    literal: "true false",
+    built_in: "int float logic string char void tuple array map comparable subtype castable_subtype Print",
+  },
+  contains: [
+    hl.COMMENT("<#", "#>"),
+    hl.COMMENT("#", "$"),
+    hl.QUOTE_STRING_MODE,
+    hl.C_NUMBER_MODE,
+    // <public>, <override>, <native>, <transacts>, … effect/access specifiers
+    { className: "meta", begin: /<[A-Za-z_]\w*>/ },
+    // identifiers that look like a definition: name := / name(
+    { className: "title", begin: /[A-Za-z_]\w*(?=\s*(:=|\())/, relevance: 0 },
+  ],
+}));
 
 interface ClipboardEntry {
   id: string;
@@ -106,6 +131,27 @@ function looksLikeCode(t: string): boolean {
   return (hits >= 1 && (t.includes("\n") || hits >= 2)) || (hasBlock && semiLines >= 2);
 }
 
+const VERSE_SPECIFIER = /<(?:public|private|internal|protected|epic_internal|override|native|final|abstract|unique|concrete|castable|persistent|suspends|decides|transacts|varies|computes|converges|reads|writes|allocates|no_rollback|constructor)>/;
+
+/// Verse (UEFN) is brace-/semicolon-free and indentation-based, so it slips past
+/// looksLikeCode. Detect it by its signatures instead.
+function isVerse(s: string): boolean {
+  let score = 0;
+  if (VERSE_SPECIFIER.test(s)) score += 2;                       // <override>, <public>, …
+  if (/:=/.test(s)) score += 1;                                  // definitions
+  if (/\bclass\s*\([^)]*\)\s*:/.test(s)) score += 2;             // X := class(base):
+  if (/<#[\s\S]*?#>/.test(s)) score += 1;                        // block comment
+  if (/\b(?:creative_device|creative_prop|fort_character|agent|logic|payload)\b/.test(s)) score += 1;
+  if (/\)\s*<[a-z_]+>\s*:\w+\s*=/.test(s)) score += 2;           // method<suspends>:void=
+  return score >= 2;
+}
+
+/// Force a specific grammar for languages highlight.js can't reliably auto-detect
+/// (currently just Verse). Returns undefined ⇒ let hljs auto-detect.
+function guessLang(s: string): string | undefined {
+  return isVerse(s) ? "verse" : undefined;
+}
+
 function detectKind(text: string): Kind {
   const s = text.trim();
   if (!s) return "text";
@@ -119,6 +165,7 @@ function detectKind(text: string): Kind {
   }
   if (isXml(s)) return "xml";
   if (isCsv(s)) return "csv";
+  if (isVerse(s)) return "code";
   if (isMarkdown(s)) return "markdown";
   if (looksLikeCode(s)) return "code";
   return "text";
@@ -187,22 +234,39 @@ function domainOf(url: string): string {
 function escapeHtml(s: string): string {
   return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
 }
-function highlightJson(raw: string): string {
-  let formatted: string;
-  try { formatted = JSON.stringify(JSON.parse(raw), null, 2); } catch { return escapeHtml(raw); }
-  return escapeHtml(formatted).replace(
-    /("(?:\\u[a-fA-F0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(?:true|false)\b|\bnull\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
-    (m: string, _grp: string, colon: string) => {
-      let cls = "j-num";
-      if (m.startsWith("\"")) cls = colon ? "j-key" : "j-str";
-      else if (m === "true" || m === "false") cls = "j-bool";
-      else if (m === "null") cls = "j-null";
-      return `<span class="${cls}">${m}</span>`;
+/// Syntax-highlight code into hljs-classed HTML. When the language is known
+/// (json/xml) we tell hljs directly; otherwise it auto-detects across the common
+/// language set. Falls back to plain escaped text on any error.
+function highlightCode(text: string, lang?: string): { html: string; language?: string } {
+  try {
+    if (lang && hljs.getLanguage(lang)) {
+      return { html: hljs.highlight(text, { language: lang, ignoreIllegals: true }).value, language: lang };
     }
-  );
+    const r = hljs.highlightAuto(text);
+    return { html: r.value, language: r.language };
+  } catch {
+    return { html: escapeHtml(text) };
+  }
 }
-function highlightMarkup(raw: string): string {
-  return escapeHtml(raw).replace(/(&lt;\/?[\s\S]*?&gt;)/g, '<span class="x-tag">$1</span>');
+
+/// Highlighted HTML + detected language for the code-ish kinds; null otherwise.
+function codeInfoFor(kind: Kind, text: string): { html: string; language?: string } | null {
+  if (kind === "json") {
+    let src = text;
+    try { src = JSON.stringify(JSON.parse(text), null, 2); } catch { /* keep raw */ }
+    return highlightCode(src, "json");
+  }
+  if (kind === "xml") return highlightCode(text, "xml");
+  if (kind === "code") return highlightCode(text, guessLang(text));
+  return null;
+}
+
+/// Proper display name for a highlight.js language id ("verse" → "Verse",
+/// "typescript" → "TypeScript"). Falls back to a capitalized id.
+function langDisplayName(id: string): string {
+  const name = hljs.getLanguage(id)?.name;
+  if (name) return name;
+  return id.charAt(0).toUpperCase() + id.slice(1);
 }
 function renderMarkdown(raw: string): string {
   let h = escapeHtml(raw);
@@ -484,13 +548,9 @@ function saveLinkMeta(url: string, m: LinkMeta) {
 
 // ── Card body (non-media kinds) ─────────────────────────────────────────────────
 
-function CardBody({ kind, entry }: { kind: Kind; entry: ClipboardEntry }) {
-  if (kind === "json")
-    return <pre className="card-code" dangerouslySetInnerHTML={{ __html: highlightJson(entry.text) }} />;
-  if (kind === "xml")
-    return <pre className="card-code" dangerouslySetInnerHTML={{ __html: highlightMarkup(entry.text) }} />;
-  if (kind === "code")
-    return <pre className="card-code" dangerouslySetInnerHTML={{ __html: escapeHtml(entry.text) }} />;
+function CardBody({ kind, entry, codeHtml }: { kind: Kind; entry: ClipboardEntry; codeHtml: string | null }) {
+  if (codeHtml !== null)
+    return <pre className="card-code hljs" dangerouslySetInnerHTML={{ __html: codeHtml }} />;
   if (kind === "markdown")
     return <div className="card-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(entry.text) }} />;
   if (kind === "csv") {
@@ -676,8 +736,12 @@ function Card({
   const commit = () => { setEditing(false); onRename(entry.id, name); };
   const cancel = () => { setName(entry.name ?? ""); setEditing(false); };
 
+  const codeInfo = useMemo(() => codeInfoFor(kind, entry.text), [kind, entry.text]);
+
   const favicon = kind === "link" ? `https://www.google.com/s2/favicons?domain=${domainOf(url)}&sz=64` : null;
-  const baseLabel = kind === "link" && isMedia ? "Rich Link" : KIND_LABEL[kind];
+  // Code cards show the detected language (Verse, TypeScript, …) as the label.
+  const codeLabel = kind === "code" && codeInfo?.language ? langDisplayName(codeInfo.language) : null;
+  const baseLabel = codeLabel ?? (kind === "link" && isMedia ? "Rich Link" : KIND_LABEL[kind]);
   const label = name.trim() || baseLabel;
   const footerMeta = isMedia
     ? (kind === "image" ? metaText("image", entry)
@@ -728,7 +792,7 @@ function Card({
           )}
         </div>
 
-        {!isMedia && <div className="card-body"><CardBody kind={kind} entry={entry} /></div>}
+        {!isMedia && <div className="card-body"><CardBody kind={kind} entry={entry} codeHtml={codeInfo?.html ?? null} /></div>}
 
         <div className={`card-footer${isMedia ? " overlay" : ""}`}>
           <span className="card-meta">{footerMeta}</span>
@@ -1153,11 +1217,6 @@ function App() {
     updateFades();
   }, [filter, search]);
 
-  const handleWheel = (e: React.WheelEvent) => {
-    if (!scrollRef.current) return;
-    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) scrollRef.current.scrollLeft += e.deltaY;
-  };
-
   const handlePin = async (id: string) => {
     const newPinned = await invoke<boolean>("toggle_pin", { id });
     setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, pinned: newPinned } : e)));
@@ -1225,7 +1284,6 @@ function App() {
       <div
         className={`cards-row${filter === "emoji" ? " is-emoji" : ""}${filter === "downloader" ? " is-downloader" : ""}`}
         ref={scrollRef}
-        onWheel={handleWheel}
         onScroll={updateFades}
         {...(filter === "emoji" || filter === "downloader" ? {} : drag)}
       >

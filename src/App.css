@@ -230,27 +230,57 @@ img { -webkit-user-drag: none; user-select: none; pointer-events: none; }
 /* ── Body ── */
 .card-body { position: relative; z-index: 1; flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 .card-textbody {
-  flex: 1; font-size: 12.5px; line-height: 1.5; color: rgba(20, 20, 24, 0.80);
-  padding: 10px 14px 6px; overflow: hidden;
-  display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical;
-  white-space: pre-wrap; word-break: break-word;
+  flex: 1; min-height: 0; font-size: 12.5px; line-height: 1.5; color: rgba(20, 20, 24, 0.80);
+  padding: 10px 14px 8px; overflow-y: auto; overflow-x: hidden;
+  white-space: pre-wrap; word-break: break-word; overscroll-behavior: contain;
 }
+/* Code sits in an embedded editor pane so VS Code-style token colors stay
+   readable over the card's colored gradient. Scrolls both ways for long
+   code/long lines; the wheel scrolls it vertically. */
 .card-code {
-  flex: 1; font-family: "Cascadia Code", "JetBrains Mono", "SF Mono", Consolas, monospace;
-  font-size: 11px; line-height: 1.5; color: rgba(20, 20, 24, 0.82);
-  padding: 10px 14px 6px; overflow: hidden; white-space: pre; text-overflow: ellipsis; tab-size: 2;
+  flex: 1; min-height: 0; margin: 2px 8px 8px;
+  font-family: "Cascadia Code", "JetBrains Mono", "SF Mono", Consolas, monospace;
+  font-size: 11px; line-height: 1.55; color: #d4d4d4;
+  padding: 9px 11px; overflow: auto; white-space: pre; tab-size: 2;
+  background: rgba(14, 15, 20, 0.72); border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06); overscroll-behavior: contain;
 }
-.card-code .j-key { color: #6b4ea8; font-weight: 600; }
-.card-code .j-str { color: #1f7a4d; }
-.card-code .j-num { color: #b5571a; }
-.card-code .j-bool { color: #1d6fb8; }
-.card-code .j-null { color: #9a9a9a; }
-.card-code .x-tag { color: #2d6e9e; }
+
+/* VS Code Dark+-ish palette for highlight.js tokens */
+.card-code .hljs-comment, .card-code .hljs-quote { color: #6a9955; font-style: italic; }
+.card-code .hljs-keyword, .card-code .hljs-selector-tag, .card-code .hljs-doctag { color: #569cd6; }
+.card-code .hljs-built_in, .card-code .hljs-type, .card-code .hljs-class .hljs-title,
+.card-code .hljs-title.class_ { color: #4ec9b0; }
+.card-code .hljs-string, .card-code .hljs-regexp, .card-code .hljs-meta .hljs-string { color: #ce9178; }
+.card-code .hljs-number, .card-code .hljs-literal { color: #b5cea8; }
+.card-code .hljs-title, .card-code .hljs-title.function_, .card-code .hljs-section { color: #dcdcaa; }
+.card-code .hljs-attr, .card-code .hljs-attribute, .card-code .hljs-variable,
+.card-code .hljs-template-variable, .card-code .hljs-property, .card-code .hljs-params { color: #9cdcfe; }
+.card-code .hljs-tag, .card-code .hljs-name, .card-code .hljs-selector-id,
+.card-code .hljs-selector-class { color: #569cd6; }
+.card-code .hljs-symbol, .card-code .hljs-bullet, .card-code .hljs-link { color: #d7ba7d; }
+.card-code .hljs-meta, .card-code .hljs-keyword.hljs-flow { color: #c586c0; }
+.card-code .hljs-operator, .card-code .hljs-punctuation { color: #d4d4d4; }
+.card-code .hljs-addition { color: #b5cea8; }
+.card-code .hljs-deletion { color: #ce9178; }
+.card-code .hljs-emphasis { font-style: italic; }
+.card-code .hljs-strong { font-weight: 700; }
 
 .card-md {
-  flex: 1; font-size: 12.5px; line-height: 1.55; color: rgba(20, 20, 24, 0.8);
-  padding: 10px 14px 6px; overflow: hidden; white-space: pre-wrap; word-break: break-word;
+  flex: 1; min-height: 0; font-size: 12.5px; line-height: 1.55; color: rgba(20, 20, 24, 0.8);
+  padding: 10px 14px 8px; overflow-y: auto; overflow-x: hidden;
+  white-space: pre-wrap; word-break: break-word; overscroll-behavior: contain;
 }
+
+/* Thin, subtle scrollbars inside the scrollable clip bodies */
+.card-code::-webkit-scrollbar, .card-textbody::-webkit-scrollbar, .card-md::-webkit-scrollbar { width: 8px; height: 8px; }
+.card-code::-webkit-scrollbar-thumb, .card-textbody::-webkit-scrollbar-thumb, .card-md::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18); border-radius: 4px;
+}
+.card-code::-webkit-scrollbar-thumb:hover, .card-textbody::-webkit-scrollbar-thumb:hover, .card-md::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+.card-code::-webkit-scrollbar-track, .card-textbody::-webkit-scrollbar-track, .card-md::-webkit-scrollbar-track { background: transparent; }
 .card-md .md-h { font-weight: 700; font-size: 13.5px; color: rgba(20, 20, 24, 0.92); }
 .card-md code { font-family: "Cascadia Code", monospace; font-size: 11px; background: rgba(0, 0, 0, 0.06); padding: 0 3px; border-radius: 3px; }
 .card-md strong { font-weight: 700; }
