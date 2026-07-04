@@ -16,6 +16,7 @@ mod store;
 use store::{ClipboardEntry, Store};
 
 mod downloader;
+mod localsend;
 
 const BAR_HEIGHT_LOGICAL: f64 = 400.0;
 const MAX_TEXT_LEN: usize = 100_000;
@@ -37,7 +38,7 @@ pub(crate) fn new_id() -> String {
 }
 
 /// UTF-8 safe truncation to a maximum number of *characters*.
-fn cap_text(s: &str) -> String {
+pub(crate) fn cap_text(s: &str) -> String {
     if s.chars().count() > MAX_TEXT_LEN {
         s.chars().take(MAX_TEXT_LEN).collect()
     } else {
@@ -418,10 +419,17 @@ fn hide_window(window: tauri::WebviewWindow) {
     hide_bar(&window);
 }
 
-fn is_image_path(p: &std::path::Path) -> bool {
+pub(crate) fn is_image_path(p: &std::path::Path) -> bool {
     matches!(
         p.extension().and_then(|e| e.to_str()).map(|s| s.to_ascii_lowercase()).as_deref(),
-        Some("png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" | "tiff")
+        Some(
+            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" | "tiff" | "tif"
+                | "avif" | "dds" | "exr" | "hdr" | "pnm" | "pbm" | "pgm" | "ppm" | "qoi" | "tga"
+                // No Rust decoder handles these (patent-encumbered/proprietary codecs) —
+                // recognized here so they still route through the thumbnail path, which
+                // falls back to Windows' own WIC decoder for them (see open_image_any).
+                | "heic" | "heif" | "jxr" | "wdp"
+        )
     )
 }
 
@@ -652,9 +660,90 @@ fn save_image_clip(img: arboard::ImageData, dir: &std::path::Path, id: &str) -> 
     Some(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(&png)))
 }
 
+/// Decode an image file the `image` crate can't handle (HEIC/HEIF above all —
+/// no Rust crate decodes it without a heavy native codec, since it's built on
+/// patent-encumbered HEVC) via Windows' own WIC. This gets it for free on
+/// whatever image formats the OS itself understands, no extra binary size.
+#[cfg(target_os = "windows")]
+fn decode_via_wic(path: &std::path::Path) -> Option<image::DynamicImage> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Graphics::Imaging::{
+        CLSID_WICImagingFactory, GUID_WICPixelFormat32bppRGBA, IWICImagingFactory,
+        WICBitmapDitherTypeNone, WICBitmapPaletteTypeCustom, WICDecodeMetadataCacheOnDemand,
+    };
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
+
+    unsafe {
+        // COM needs per-thread init; this may run on any worker thread (a
+        // LocalSend request handler, the clipboard watcher, …). An `Ok` result
+        // (S_OK or S_FALSE) means we hold a reference that needs releasing;
+        // RPC_E_CHANGED_MODE means the thread was already in a different
+        // apartment — proceed anyway (COM still works), just don't uninit it.
+        let owns_co = CoInitializeEx(None, COINIT_MULTITHREADED).is_ok();
+
+        let result = (|| -> Option<image::DynamicImage> {
+            let factory: IWICImagingFactory =
+                CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER).ok()?;
+
+            let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+            let decoder = factory
+                .CreateDecoderFromFilename(
+                    PCWSTR(wide.as_ptr()),
+                    None,
+                    windows::Win32::Foundation::GENERIC_READ,
+                    WICDecodeMetadataCacheOnDemand,
+                )
+                .ok()?;
+            let frame = decoder.GetFrame(0).ok()?;
+
+            let converter = factory.CreateFormatConverter().ok()?;
+            converter
+                .Initialize(
+                    &frame,
+                    &GUID_WICPixelFormat32bppRGBA,
+                    WICBitmapDitherTypeNone,
+                    None,
+                    0.0,
+                    WICBitmapPaletteTypeCustom,
+                )
+                .ok()?;
+
+            let mut w = 0u32;
+            let mut h = 0u32;
+            converter.GetSize(&mut w, &mut h).ok()?;
+            if w == 0 || h == 0 {
+                return None;
+            }
+
+            let stride = w.checked_mul(4)?;
+            let mut buf = vec![0u8; (stride as usize).checked_mul(h as usize)?];
+            converter.CopyPixels(std::ptr::null(), stride, &mut buf).ok()?;
+
+            image::RgbaImage::from_raw(w, h, buf).map(image::DynamicImage::ImageRgba8)
+        })();
+
+        if owns_co {
+            CoUninitialize();
+        }
+        result
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn decode_via_wic(_path: &std::path::Path) -> Option<image::DynamicImage> {
+    None
+}
+
+/// Open any image file we can, trying the fast pure-Rust decoders first and
+/// falling back to the OS decoder (WIC) for anything they don't cover.
+fn open_image_any(path: &std::path::Path) -> Option<image::DynamicImage> {
+    image::open(path).ok().or_else(|| decode_via_wic(path))
+}
+
 /// Generate a thumbnail data URL (+ dimensions) for an image file on disk.
-fn thumbnail_image_file(path: &std::path::Path) -> Option<(String, u32, u32)> {
-    let img = image::open(path).ok()?;
+pub(crate) fn thumbnail_image_file(path: &std::path::Path) -> Option<(String, u32, u32)> {
+    let img = open_image_any(path)?;
     let (w, h) = (img.width(), img.height());
     let thumb = img.thumbnail(IMG_MAX_DIM, IMG_MAX_DIM);
     let mut png = Vec::new();
@@ -668,7 +757,7 @@ fn thumbnail_image_file(path: &std::path::Path) -> Option<(String, u32, u32)> {
 
 /// Put a saved original image file onto the clipboard at full resolution.
 fn set_clipboard_image_file(path: &std::path::Path) -> Option<()> {
-    let img = image::open(path).ok()?;
+    let img = open_image_any(path)?;
     let rgba = img.to_rgba8();
     let (w, h) = (rgba.width() as usize, rgba.height() as usize);
     let mut cb = arboard::Clipboard::new().ok()?;
@@ -1472,7 +1561,11 @@ pub fn run() {
             hide_window,
             downloader::downloader_ready,
             downloader::setup_downloader,
-            downloader::start_download
+            downloader::start_download,
+            localsend::localsend_list_peers,
+            localsend::localsend_send,
+            localsend::localsend_send_to_ip,
+            localsend::localsend_get_history
         ])
         .setup(|app| {
             // Store — must be managed before the watcher starts
@@ -1518,6 +1611,20 @@ pub fn run() {
                 Some("1")
             );
             app.manage(WinVOverrideState(Mutex::new(win_v_override)));
+
+            // LocalSend — discovery + send/receive. Off by default (it's a
+            // background listener + a periodic multicast announce — no sense
+            // paying for either until it's actually wanted). The "LocalSend"
+            // tray toggle flips LocalSendState::enabled at runtime, and the
+            // discovery/HTTP threads bind/release their sockets in response
+            // rather than just idling while "disabled".
+            let localsend_enabled = matches!(
+                app.state::<Store>().get_setting("localsend_enabled").as_deref(),
+                Some("1")
+            );
+            let localsend_fingerprint = localsend::load_or_create_fingerprint(&app.state::<Store>());
+            app.manage(localsend::LocalSendState::new(localsend_fingerprint, localsend_enabled));
+            localsend::start(app.handle().clone());
 
             // Shift+Alt+V is the always-on base shortcut, so the app is reachable
             // no matter what state the Win+V override is in.
@@ -1566,13 +1673,15 @@ pub fn run() {
             let acrylic_item = CheckMenuItem::with_id(app, "toggle_backdrop", "Acrylic", true, acrylic, None::<&str>)?;
             let ontop_item = CheckMenuItem::with_id(app, "toggle_ontop", "Always on top", true, always_on_top, None::<&str>)?;
             let win_v_item = CheckMenuItem::with_id(app, "toggle_win_v", "Use Win+V", true, win_v_override, None::<&str>)?;
+            let localsend_item = CheckMenuItem::with_id(app, "toggle_localsend", "LocalSend", true, localsend_enabled, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&startup_item, &light_item, &acrylic_item, &ontop_item, &win_v_item, &quit])?;
+            let menu = Menu::with_items(app, &[&startup_item, &light_item, &acrylic_item, &ontop_item, &win_v_item, &localsend_item, &quit])?;
             let li = light_item.clone();
             let si = startup_item.clone();
             let ai = acrylic_item.clone();
             let oi = ontop_item.clone();
             let wi = win_v_item.clone();
+            let lsi = localsend_item.clone();
             let tooltip = if win_v_override { "Clip — Win+V" } else { "Clip — Shift+Alt+V" };
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
@@ -1634,6 +1743,13 @@ pub fn run() {
                         let _ = wi.set_checked(new_override);
                         app.state::<Store>().set_setting("win_v_override", if new_override { "1" } else { "0" });
                         update_win_v_override(app, new_override);
+                    }
+                    "toggle_localsend" => {
+                        let ls = app.state::<localsend::LocalSendState>();
+                        let new_enabled = !ls.enabled.load(std::sync::atomic::Ordering::Relaxed);
+                        ls.enabled.store(new_enabled, std::sync::atomic::Ordering::Relaxed);
+                        let _ = lsi.set_checked(new_enabled);
+                        app.state::<Store>().set_setting("localsend_enabled", if new_enabled { "1" } else { "0" });
                     }
                     "toggle_autostart" => {
                         let mgr = app.autolaunch();

@@ -473,6 +473,45 @@ img { -webkit-user-drag: none; user-select: none; pointer-events: none; }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
 
 /* ══════════════════════════════════════════════════════════════════════════════
+   CONTEXT MENU  (right-click on a clip)
+══════════════════════════════════════════════════════════════════════════════ */
+
+.ctx-overlay { position: fixed; inset: 0; z-index: 200; background: transparent; cursor: default; }
+.ctx-menu {
+  position: fixed; z-index: 201; min-width: 168px; max-width: 240px;
+  background: rgba(28, 29, 34, 0.97); border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px; padding: 5px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  display: flex; flex-direction: column; gap: 1px;
+  animation: ctx-in 0.12s cubic-bezier(.2, .7, .2, 1);
+}
+@keyframes ctx-in { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: scale(1); } }
+.ctx-item {
+  background: none; border: none; text-align: left; cursor: pointer;
+  font-family: inherit; font-size: 12.5px; font-weight: 500; color: rgba(255, 255, 255, 0.88);
+  padding: 7px 10px; border-radius: 6px; transition: background 0.1s ease;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ctx-item:hover { background: rgba(255, 255, 255, 0.1); }
+.ctx-item:disabled { opacity: 0.45; cursor: default; }
+.ctx-item:disabled:hover { background: none; }
+.ctx-item.danger { color: rgba(255, 130, 120, 0.95); }
+.ctx-item.danger:hover { background: rgba(220, 45, 45, 0.22); }
+.ctx-sep { height: 1px; margin: 4px 6px; background: rgba(255, 255, 255, 0.09); }
+.ctx-heading {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+  color: rgba(255, 255, 255, 0.4); padding: 4px 10px 2px;
+}
+.ctx-empty { font-size: 12px; color: rgba(255, 255, 255, 0.4); padding: 6px 10px 8px; }
+.ctx-sub { font-size: 10.5px; color: rgba(255, 255, 255, 0.4); margin-left: 4px; }
+.ctx-ip-input {
+  background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.9); border-radius: 6px; padding: 6px 9px; margin: 2px 2px 1px;
+  font-family: inherit; font-size: 12px; outline: none;
+}
+.ctx-ip-input::placeholder { color: rgba(255, 255, 255, 0.38); }
+.ctx-ip-input:focus { border-color: rgba(255, 255, 255, 0.3); }
+
+/* ══════════════════════════════════════════════════════════════════════════════
    LIGHT THEME  (follows Windows; the rules above are the dark defaults)
 ══════════════════════════════════════════════════════════════════════════════ */
 
@@ -648,3 +687,21 @@ img { -webkit-user-drag: none; user-select: none; pointer-events: none; }
 [data-theme="light"] .dl-setup-text,
 [data-theme="light"] .dl-job-label { color: rgba(0, 0, 0, 0.55); }
 [data-theme="light"] .dl-btn.primary { color: #fff; background: rgba(70, 130, 240, 0.92); }
+
+/* Context menu — light theme */
+[data-theme="light"] .ctx-menu {
+  background: rgba(250, 250, 252, 0.98); border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+}
+[data-theme="light"] .ctx-item { color: rgba(0, 0, 0, 0.82); }
+[data-theme="light"] .ctx-item:hover { background: rgba(0, 0, 0, 0.06); }
+[data-theme="light"] .ctx-item.danger { color: rgba(200, 40, 30, 0.95); }
+[data-theme="light"] .ctx-item.danger:hover { background: rgba(220, 45, 45, 0.12); }
+[data-theme="light"] .ctx-sep { background: rgba(0, 0, 0, 0.08); }
+[data-theme="light"] .ctx-heading { color: rgba(0, 0, 0, 0.4); }
+[data-theme="light"] .ctx-empty { color: rgba(0, 0, 0, 0.4); }
+[data-theme="light"] .ctx-sub { color: rgba(0, 0, 0, 0.4); }
+[data-theme="light"] .ctx-ip-input {
+  background: rgba(0, 0, 0, 0.05); border-color: rgba(0, 0, 0, 0.12); color: rgba(0, 0, 0, 0.85);
+}
+[data-theme="light"] .ctx-ip-input::placeholder { color: rgba(0, 0, 0, 0.4); }

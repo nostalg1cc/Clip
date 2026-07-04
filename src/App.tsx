@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { SearchBox, TabList, Tab, Button } from "@fluentui/react-components";
@@ -617,12 +617,13 @@ function CardBody({ kind, entry, codeHtml }: { kind: Kind; entry: ClipboardEntry
 // ── Color card (full-bleed swatch + copyable formats) ───────────────────────────
 
 function ColorCard({
-  entry, onPin, onDelete, notify,
+  entry, onPin, onDelete, notify, onContextMenu,
 }: {
   entry: ClipboardEntry;
   onPin: (id: string) => void;
   onDelete: (id: string, e: React.MouseEvent) => void;
   notify: (m: string) => void;
+  onContextMenu: (e: React.MouseEvent, entry: ClipboardEntry) => void;
 }) {
   const raw = entry.text.trim();
   const rgb = parseColor(raw);
@@ -631,12 +632,11 @@ function ColorCard({
   const onLight = lum > 150;
 
   const paste = () => invoke("paste_clip", { id: entry.id });
-  const copy = (e: React.MouseEvent) => { e.preventDefault(); invoke("copy_clip", { id: entry.id }); notify("Copied to clipboard"); };
   const copyFmt = (e: React.MouseEvent, v: string) => { e.stopPropagation(); invoke("copy_text", { text: v }); notify(`Copied  ${v}`); };
 
   return (
     <div className={`card kind-color is-color${onLight ? " on-light" : ""}${entry.pinned ? " is-pinned" : ""}`}
-      style={{ aspectRatio: "1" }} onClick={paste} onContextMenu={copy}
+      style={{ aspectRatio: "1" }} onClick={paste} onContextMenu={(e) => onContextMenu(e, entry)}
       onMouseMove={handleTiltMove} onMouseEnter={handleCardEnter}
       onMouseLeave={handleTiltLeave} onAnimationEnd={handleGlintEnd}>
       <div className="card-clip">
@@ -667,13 +667,13 @@ function ColorCard({
 // ── Unified card ───────────────────────────────────────────────────────────────
 
 function Card({
-  entry, onPin, onDelete, onRename, onCopy,
+  entry, onPin, onDelete, onRename, onContextMenu,
 }: {
   entry: ClipboardEntry;
   onPin: (id: string) => void;
   onDelete: (id: string, e: React.MouseEvent) => void;
   onRename: (id: string, name: string) => void;
-  onCopy: (id: string) => void;
+  onContextMenu: (e: React.MouseEvent, entry: ClipboardEntry) => void;
 }) {
   const kind = effectiveKind(entry);
   const url = entry.text.trim();
@@ -729,7 +729,6 @@ function Card({
     if (e.altKey && openable) { openExternal(); return; }
     invoke("paste_clip", { id: entry.id });
   };
-  const copy = (e: React.MouseEvent) => { e.preventDefault(); onCopy(entry.id); };
   const startEdit = (e: React.MouseEvent) => {
     e.stopPropagation(); setEditing(true); setTimeout(() => inputRef.current?.select(), 0);
   };
@@ -754,7 +753,7 @@ function Card({
       className={`card kind-${kind}${isMedia ? " is-media" : ""}${entry.pinned ? " is-pinned" : ""}`}
       style={{ ...arStyle, "--header-color": headerColor } as React.CSSProperties}
       onClick={onCardClick}
-      onContextMenu={copy}
+      onContextMenu={(e) => onContextMenu(e, entry)}
       onMouseMove={handleTiltMove}
       onMouseEnter={handleCardEnter}
       onMouseLeave={handleTiltLeave}
@@ -1003,14 +1002,14 @@ function jobLabel(stage: string, percent: number): string {
 interface DlJob { stage: string; percent: number; message?: string }
 
 function DownloaderView({
-  downloads, notify, onPin, onDelete, onRename, onCopy,
+  downloads, notify, onPin, onDelete, onRename, onContextMenu,
 }: {
   downloads: ClipboardEntry[];
   notify: (m: string) => void;
   onPin: (id: string) => void;
   onDelete: (id: string, e: React.MouseEvent) => void;
   onRename: (id: string, name: string) => void;
-  onCopy: (id: string) => void;
+  onContextMenu: (e: React.MouseEvent, entry: ClipboardEntry) => void;
 }) {
   const [ready, setReady] = useState<boolean | null>(null);
   const [setup, setSetup] = useState<{ stage: string; error?: string } | null>(null);
@@ -1124,11 +1123,155 @@ function DownloaderView({
           <div className="empty-state">Downloads land here<br />(kept for 24h)</div>
         ) : (
           downloads.map((entry) => (
-            <Card key={entry.id} entry={entry} onPin={onPin} onDelete={onDelete} onRename={onRename} onCopy={onCopy} />
+            <Card key={entry.id} entry={entry} onPin={onPin} onDelete={onDelete} onRename={onRename} onContextMenu={onContextMenu} />
           ))
         )}
       </div>
     </div>
+  );
+}
+
+// ── Context menu ─────────────────────────────────────────────────────────────
+
+interface CtxMenuState { x: number; y: number; entry: ClipboardEntry }
+interface LocalSendPeer { fingerprint: string; alias: string; ip: string; port: number; deviceType?: string }
+interface LocalSendHistoryEntry { ip: string; port: number; alias?: string; lastUsedMs: number }
+
+function ContextMenu({
+  state, onClose, onCopy, onPin, onDelete, notify,
+}: {
+  state: CtxMenuState;
+  onClose: () => void;
+  onCopy: (id: string) => void;
+  onPin: (id: string) => void;
+  onDelete: (id: string, e: React.MouseEvent) => void;
+  notify: (m: string) => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ x: state.x, y: state.y, ready: false });
+  const [view, setView] = useState<"main" | "localsend">("main");
+  const [peers, setPeers] = useState<LocalSendPeer[]>([]);
+  const [history, setHistory] = useState<LocalSendHistoryEntry[]>([]);
+  const [manualIp, setManualIp] = useState("");
+  const [sending, setSending] = useState(false);
+
+  // Measure after mount and clamp to the window so the menu never opens
+  // off-screen (the bar is full-width but only ~400px tall). Re-clamps when
+  // switching views since the LocalSend sub-view is a different size.
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!el) return;
+    const { offsetWidth: w, offsetHeight: h } = el;
+    const x = Math.max(6, Math.min(state.x, window.innerWidth - w - 6));
+    const y = Math.max(6, Math.min(state.y, window.innerHeight - h - 6));
+    setPos({ x, y, ready: true });
+  }, [state.x, state.y, view]);
+
+  // Poll for nearby devices while the LocalSend sub-view is open. Also load
+  // recently-used devices once — multicast discovery is finicky (VPNs, VMs,
+  // multiple network adapters all commonly break it silently), so a device
+  // you've successfully sent to before is a reliable one-click fallback.
+  useEffect(() => {
+    if (view !== "localsend") return;
+    invoke<LocalSendHistoryEntry[]>("localsend_get_history").then(setHistory).catch(() => {});
+    const load = () => invoke<LocalSendPeer[]>("localsend_list_peers").then(setPeers).catch(() => {});
+    load();
+    const t = window.setInterval(load, 2000);
+    return () => window.clearInterval(t);
+  }, [view]);
+
+  // Send commands return immediately (the actual network I/O happens on a
+  // background thread on the Rust side, so a slow/unreachable device can't
+  // freeze the app) — the real outcome arrives via this event.
+  useEffect(() => {
+    const un = listen<{ ok: boolean; message?: string }>("localsend-send-result", (e) => {
+      notify(e.payload.ok ? "Sent" : (e.payload.message ?? "Couldn't send"));
+      setSending(false);
+      onClose();
+    });
+    return () => { un.then((f) => f()); };
+  }, [notify, onClose]);
+
+  const { entry } = state;
+
+  const send = (target: { fingerprint: string } | { ip: string; port?: number }) => {
+    setSending(true);
+    if ("fingerprint" in target) invoke("localsend_send", { id: entry.id, fingerprint: target.fingerprint });
+    else invoke("localsend_send_to_ip", { id: entry.id, ip: target.ip, port: target.port ?? 53317 });
+  };
+
+  const item = (label: string, action: (e: React.MouseEvent) => void, opts?: { danger?: boolean; disabled?: boolean }) => (
+    <button
+      className={`ctx-item${opts?.danger ? " danger" : ""}`}
+      disabled={opts?.disabled}
+      onClick={(e) => { e.stopPropagation(); action(e); }}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <>
+      {/* Full-screen catcher: first click/right-click anywhere else just
+          dismisses the menu, same as a native context menu. */}
+      <div className="ctx-overlay" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }} />
+      <div
+        className="ctx-menu"
+        ref={menuRef}
+        style={{ left: pos.x, top: pos.y, visibility: pos.ready ? "visible" : "hidden" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {view === "main" ? (
+          <>
+            {item("Copy", () => { onCopy(entry.id); onClose(); })}
+            {item(entry.pinned ? "Unpin" : "Pin", () => { onPin(entry.id); onClose(); })}
+            {item("Send via LocalSend  ›", () => setView("localsend"))}
+            <div className="ctx-sep" />
+            {item("Delete", (e) => onDelete(entry.id, e), { danger: true })}
+          </>
+        ) : (
+          <>
+            {item("‹  Back", () => setView("main"))}
+            <div className="ctx-sep" />
+            <div className="ctx-heading">Nearby devices</div>
+            {peers.length === 0 && <div className="ctx-empty">{sending ? "Sending…" : "Searching…"}</div>}
+            {peers.map((p) => (
+              <button
+                key={p.fingerprint} className="ctx-item" disabled={sending}
+                onClick={(e) => { e.stopPropagation(); send({ fingerprint: p.fingerprint }); }}
+              >
+                {p.alias} <span className="ctx-sub">{p.ip}</span>
+              </button>
+            ))}
+            {history.filter((h) => !peers.some((p) => p.ip === h.ip)).length > 0 && (
+              <>
+                <div className="ctx-heading">Recent</div>
+                {history.filter((h) => !peers.some((p) => p.ip === h.ip)).map((h) => (
+                  <button
+                    key={h.ip} className="ctx-item" disabled={sending}
+                    onClick={(e) => { e.stopPropagation(); send({ ip: h.ip, port: h.port }); }}
+                  >
+                    {h.alias ?? h.ip} <span className="ctx-sub">{h.ip}</span>
+                  </button>
+                ))}
+              </>
+            )}
+            <div className="ctx-sep" />
+            <input
+              className="ctx-ip-input" placeholder="Or enter an IP…" value={manualIp}
+              disabled={sending}
+              onMouseDown={() => { invoke("focus_search").catch(() => {}); }}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => setManualIp(e.target.value)}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter" && manualIp.trim()) send({ ip: manualIp.trim() });
+              }}
+            />
+          </>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -1140,6 +1283,7 @@ function App() {
   const [filter, setFilter] = useState<Filter>("all");
   const [, setTick] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const displayedRef = useRef<ClipboardEntry[]>([]);
   const toastTimer = useRef<number | undefined>(undefined);
@@ -1183,6 +1327,10 @@ function App() {
     const timer = setInterval(() => setTick((t) => t + 1), 15_000);
     const onKey = (e: KeyboardEvent) => {
       const inInput = (e.target as HTMLElement)?.tagName === "INPUT";
+      if (ctxMenu) {
+        if (e.key === "Escape") setCtxMenu(null);
+        return;
+      }
       if (e.key === "Escape") {
         if (search) setSearch("");
         else if (filter !== "all") setFilter("all");
@@ -1210,7 +1358,13 @@ function App() {
       window.removeEventListener("keydown", onKey);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, filter]);
+  }, [search, filter, ctxMenu]);
+
+  // If the clip the context menu points at disappears (expired/deleted from
+  // elsewhere), close the menu instead of leaving it pointing at a stale id.
+  useEffect(() => {
+    if (ctxMenu && !entries.some((e) => e.id === ctxMenu.entry.id)) setCtxMenu(null);
+  }, [entries, ctxMenu]);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollLeft = 0;
@@ -1236,7 +1390,11 @@ function App() {
     setEntries((prev) => prev.filter((e) => e.pinned));
     notify("Cleared unpinned clips");
   };
-
+  const openContextMenu = (e: React.MouseEvent, entry: ClipboardEntry) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCtxMenu({ x: e.clientX, y: e.clientY, entry });
+  };
   const groupCounts = useMemo(() => {
     const c: Record<Group, number> & { pinned: number } = { text: 0, code: 0, link: 0, image: 0, file: 0, color: 0, pinned: 0 };
     for (const e of entries) { c[filterGroup(effectiveKind(e))]++; if (e.pinned) c.pinned++; }
@@ -1291,7 +1449,7 @@ function App() {
           <DownloaderView
             downloads={entries.filter((e) => e.process === "Downloader")}
             notify={notify}
-            onPin={handlePin} onDelete={handleDelete} onRename={handleRename} onCopy={handleCopy}
+            onPin={handlePin} onDelete={handleDelete} onRename={handleRename} onContextMenu={openContextMenu}
           />
         ) : filter === "emoji" ? (
           <EmojiView search={search} notify={notify} />
@@ -1301,8 +1459,8 @@ function App() {
           displayed.map((entry, i) => {
             const showDivider = i > 0 && displayed[i - 1].pinned && !entry.pinned;
             const card = effectiveKind(entry) === "color"
-              ? <ColorCard key={entry.id} entry={entry} onPin={handlePin} onDelete={handleDelete} notify={notify} />
-              : <Card key={entry.id} entry={entry} onPin={handlePin} onDelete={handleDelete} onRename={handleRename} onCopy={handleCopy} />;
+              ? <ColorCard key={entry.id} entry={entry} onPin={handlePin} onDelete={handleDelete} notify={notify} onContextMenu={openContextMenu} />
+              : <Card key={entry.id} entry={entry} onPin={handlePin} onDelete={handleDelete} onRename={handleRename} onContextMenu={openContextMenu} />;
             return showDivider
               ? <Fragment key={entry.id}><div className="pin-divider" />{card}</Fragment>
               : card;
@@ -1310,6 +1468,16 @@ function App() {
         )}
       </div>
       {toast && <div className="toast">{toast}</div>}
+      {ctxMenu && (
+        <ContextMenu
+          state={ctxMenu}
+          onClose={() => setCtxMenu(null)}
+          onCopy={handleCopy}
+          onPin={handlePin}
+          onDelete={handleDelete}
+          notify={notify}
+        />
+      )}
     </div>
   );
 }
