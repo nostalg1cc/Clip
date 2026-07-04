@@ -877,3 +877,69 @@ pub fn start(app: AppHandle) {
     thread::spawn(move || run_discovery(a1));
     thread::spawn(move || run_http_server(app, cert, key));
 }
+
+// ── Firewall exception (receiving needs one; sending doesn't) ───────────────
+//
+// Windows Firewall blocks unsolicited inbound connections to unrecognized
+// programs by default — especially on a "Public" network profile, which is
+// common even on a home LAN unless the user has manually set it to Private.
+// Sending is unaffected (outbound isn't filtered the same way), but receiving
+// silently hangs with no error on either end: the sender just sees "waiting"
+// forever, because the connection never reaches our HTTPS server at all.
+//
+// Adding the exception needs admin rights, so it can't happen silently during
+// a per-user, unelevated install — this requests it (one UAC prompt) the first
+// time LocalSend is actually turned on, with a message box explaining why the
+// prompt is about to appear, matching the Win+V override's pattern.
+
+/// Run once per install (tracked via a Store setting) — call whenever
+/// LocalSend is enabled, whether by a fresh toggle click or because it was
+/// already on from a previous session at startup.
+pub fn ensure_firewall_rule(store: &Store) {
+    if store.get_setting("localsend_firewall_ok").as_deref() == Some("1") {
+        return;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        crate::message_box(
+            "Clip — allow LocalSend through the firewall",
+            "Windows will ask for permission to let LocalSend receive files \
+             from other devices on your network.\n\n\
+             Approve the prompt that appears next. If you skip it, sending \
+             clips to other devices still works — only receiving from them \
+             won't.",
+        );
+        let ok = add_firewall_rule();
+        store.set_setting("localsend_firewall_ok", if ok { "1" } else { "0" });
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn add_firewall_rule() -> bool {
+    use windows::core::{w, PCWSTR};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+
+    let Ok(exe) = std::env::current_exe() else { return false };
+    let exe = exe.to_string_lossy();
+
+    // One elevated cmd.exe call adding both rules, so there's a single UAC
+    // prompt instead of two. `&` chains regardless of the first command's
+    // exit code, so a duplicate-name failure on a reinstall doesn't stop the
+    // second rule from being added.
+    let params = format!(
+        "/c netsh advfirewall firewall add rule name=\"Clip - LocalSend (TCP)\" dir=in action=allow program=\"{exe}\" protocol=TCP localport=53317 enable=yes & \
+         netsh advfirewall firewall add rule name=\"Clip - LocalSend (UDP)\" dir=in action=allow program=\"{exe}\" protocol=UDP localport=53317 enable=yes"
+    );
+    let params_w: Vec<u16> = params.encode_utf16().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        // ShellExecuteW's "runas" verb triggers the UAC consent prompt. Return
+        // value is a legacy HINSTANCE-shaped status: >32 means the elevated
+        // process actually launched (the user approved UAC); <=32 covers
+        // every failure/cancellation case.
+        let result = ShellExecuteW(None, w!("runas"), w!("cmd.exe"), PCWSTR(params_w.as_ptr()), None, SW_HIDE);
+        (result.0 as isize) > 32
+    }
+}

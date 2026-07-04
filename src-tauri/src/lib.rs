@@ -201,7 +201,7 @@ fn write_clip_reg(name: &str, val: &str) {
 
 /// Show a native, always-visible message box on its own thread (non-blocking).
 #[cfg(target_os = "windows")]
-fn message_box(title: &str, text: &str) {
+pub(crate) fn message_box(title: &str, text: &str) {
     let title = title.to_string();
     let text = text.to_string();
     thread::spawn(move || {
@@ -1625,6 +1625,14 @@ pub fn run() {
             let localsend_fingerprint = localsend::load_or_create_fingerprint(&app.state::<Store>());
             app.manage(localsend::LocalSendState::new(localsend_fingerprint, localsend_enabled));
             localsend::start(app.handle().clone());
+            if localsend_enabled {
+                // Was already on from a previous session — make sure the
+                // firewall exception exists on this install (a fresh install
+                // won't have one yet even if the setting carried over). Off
+                // the main thread since this can show a UAC prompt.
+                let app_for_fw = app.handle().clone();
+                thread::spawn(move || localsend::ensure_firewall_rule(&app_for_fw.state::<Store>()));
+            }
 
             // Shift+Alt+V is the always-on base shortcut, so the app is reachable
             // no matter what state the Win+V override is in.
@@ -1750,6 +1758,12 @@ pub fn run() {
                         ls.enabled.store(new_enabled, std::sync::atomic::Ordering::Relaxed);
                         let _ = lsi.set_checked(new_enabled);
                         app.state::<Store>().set_setting("localsend_enabled", if new_enabled { "1" } else { "0" });
+                        if new_enabled {
+                            // May show a UAC prompt (see ensure_firewall_rule) —
+                            // off the tray-event thread so the menu isn't stuck.
+                            let app_for_fw = app.clone();
+                            thread::spawn(move || localsend::ensure_firewall_rule(&app_for_fw.state::<Store>()));
+                        }
                     }
                     "toggle_autostart" => {
                         let mgr = app.autolaunch();
