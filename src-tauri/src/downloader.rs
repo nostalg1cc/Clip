@@ -1,11 +1,13 @@
 //! Media downloader — fetches yt-dlp + ffmpeg on first use (via Windows' built-in
-//! curl/tar, so no extra Rust deps), downloads any yt-dlp-supported URL as MP4 or
-//! MP3, optionally compresses video to a target size, and registers the result as
+//! curl/tar, so no extra Rust deps), downloads any yt-dlp-supported URL as video or
+//! audio, optionally compresses MP4 video to a target size, and registers the result as
 //! a normal (pasteable, 24h-TTL) clip.
 
+use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
 use std::thread;
 
 use base64::Engine;
@@ -18,6 +20,57 @@ use crate::{new_id, now_millis};
 const YTDLP_URL: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
 const FFMPEG_URL: &str =
     "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip";
+
+#[derive(Clone)]
+struct DownloadRequest {
+    id: String,
+    url: String,
+    format: String,
+    quality: String,
+    target_mb: u32,
+}
+
+struct QueueInner {
+    running: bool,
+    pending: VecDeque<DownloadRequest>,
+}
+
+pub struct DownloaderQueue {
+    inner: Mutex<QueueInner>,
+}
+
+impl DownloaderQueue {
+    pub fn new() -> Self {
+        Self {
+            inner: Mutex::new(QueueInner {
+                running: false,
+                pending: VecDeque::new(),
+            }),
+        }
+    }
+
+    fn enqueue(&self, request: DownloadRequest) -> bool {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.pending.push_back(request);
+        if inner.running {
+            false
+        } else {
+            inner.running = true;
+            true
+        }
+    }
+
+    fn next_or_stop(&self) -> Option<DownloadRequest> {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        match inner.pending.pop_front() {
+            Some(request) => Some(request),
+            None => {
+                inner.running = false;
+                None
+            }
+        }
+    }
+}
 
 // ── Paths ──────────────────────────────────────────────────────────────────────
 
@@ -197,6 +250,28 @@ fn find_and_copy(dir: &Path, name: &str, dest: &Path, found: &mut bool) {
 
 // ── Download ────────────────────────────────────────────────────────────────────
 
+const VIDEO_FORMATS: &[&str] = &["mp4", "webm", "mkv", "mov", "avi"];
+const AUDIO_FORMATS: &[&str] = &["mp3", "m4a", "wav", "flac", "opus", "aac", "vorbis"];
+
+fn is_video_format(format: &str) -> bool {
+    VIDEO_FORMATS.contains(&format)
+}
+
+fn is_audio_format(format: &str) -> bool {
+    AUDIO_FORMATS.contains(&format)
+}
+
+fn is_supported_format(format: &str) -> bool {
+    is_video_format(format) || is_audio_format(format)
+}
+
+fn media_extension(format: &str) -> &str {
+    if format == "vorbis" {
+        "ogg"
+    } else {
+        format
+    }
+}
 fn emit_progress(app: &AppHandle, id: &str, stage: &str, percent: f64, message: Option<&str>) {
     let _ = app.emit(
         "download-progress",
@@ -211,16 +286,42 @@ fn emit_progress(app: &AppHandle, id: &str, stage: &str, percent: f64, message: 
 pub fn start_download(
     app: AppHandle,
     url: String,
-    format: String,  // "mp4" | "mp3"
+    format: String, // video: mp4/webm/mkv/mov/avi; audio: mp3/m4a/wav/flac/opus/aac/vorbis
     quality: String, // "best" | "2160" | "1440" | "1080" | "720" | "480"
-    target_mb: u32,  // 0 = no compression
+    target_mb: u32, // 0 = no compression
 ) -> String {
     let id = new_id();
-    let job = id.clone();
-    thread::spawn(move || {
-        run_download(&app, &job, &url, &format, &quality, target_mb);
-    });
+    let request = DownloadRequest {
+        id: id.clone(),
+        url,
+        format,
+        quality,
+        target_mb,
+    };
+    let should_start_worker = app.state::<DownloaderQueue>().enqueue(request);
+    emit_progress(&app, &id, "queued", 0.0, None);
+    if should_start_worker {
+        let app = app.clone();
+        thread::spawn(move || run_download_queue(app));
+    }
     id
+}
+
+fn run_download_queue(app: AppHandle) {
+    loop {
+        let request = match app.state::<DownloaderQueue>().next_or_stop() {
+            Some(request) => request,
+            None => return,
+        };
+        run_download(
+            &app,
+            &request.id,
+            &request.url,
+            &request.format,
+            &request.quality,
+            request.target_mb,
+        );
+    }
 }
 
 fn run_download(app: &AppHandle, id: &str, url: &str, format: &str, quality: &str, target_mb: u32) {
@@ -236,7 +337,12 @@ fn run_download(app: &AppHandle, id: &str, url: &str, format: &str, quality: &st
         return;
     }
 
-    let is_audio = format == "mp3";
+    if !is_supported_format(format) {
+        emit_progress(app, id, "error", 0.0, Some("Unsupported download format."));
+        return;
+    }
+
+    let is_audio = is_audio_format(format);
     let out_tmpl = dl_dir.join(format!("{id}.%(ext)s"));
     let ffmpeg_dir = bin_dir(app);
 
@@ -263,11 +369,16 @@ fn run_download(app: &AppHandle, id: &str, url: &str, format: &str, quality: &st
         "jpg",
     ]);
     if is_audio {
-        cmd.args(["-x", "--audio-format", "mp3", "--audio-quality", "0"]);
+        cmd.args(["-x", "--audio-format", format, "--audio-quality", "0"]);
     } else {
-        cmd.args(["-f", "bv*+ba/b", "--merge-output-format", "mp4"]);
+        cmd.args(["-f", "bv*+ba/b"]);
         if quality != "best" {
             cmd.args(["-S", &format!("res:{quality}")]);
+        }
+        if format == "mp4" {
+            cmd.args(["--merge-output-format", "mp4"]);
+        } else {
+            cmd.args(["--merge-output-format", "mp4", "--recode-video", format]);
         }
     }
     cmd.arg(url);
@@ -333,7 +444,7 @@ fn run_download(app: &AppHandle, id: &str, url: &str, format: &str, quality: &st
     }
 
     // Locate the produced media file.
-    let media_ext = if is_audio { "mp3" } else { "mp4" };
+    let media_ext = media_extension(format);
     let mut media_path = dl_dir.join(format!("{id}.{media_ext}"));
     if !media_path.exists() {
         // Fall back to any non-thumbnail file with our id prefix.
@@ -352,7 +463,7 @@ fn run_download(app: &AppHandle, id: &str, url: &str, format: &str, quality: &st
     }
 
     // Optional compression (video only).
-    if !is_audio && target_mb > 0 {
+    if format == "mp4" && target_mb > 0 {
         emit_progress(app, id, "compressing", 100.0, None);
         compress_to_size(app, &media_path, target_mb);
     } else {

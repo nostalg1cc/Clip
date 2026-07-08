@@ -45,7 +45,7 @@ export type Kind =
   | "text" | "code" | "json" | "xml" | "markdown" | "csv"
   | "link" | "email" | "phone" | "path" | "color" | "image" | "file";
 export type Group = "text" | "code" | "link" | "image" | "color" | "file";
-export type Filter = "all" | "pinned" | "emoji" | "downloader" | Group;
+export type Filter = "all" | "pinned" | "emoji" | "downloader" | "settings" | Group;
 
 export const KIND_LABEL: Record<Kind, string> = {
   text: "Text", code: "Code", json: "JSON", xml: "XML", markdown: "Markdown", csv: "CSV",

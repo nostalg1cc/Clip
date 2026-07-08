@@ -17,6 +17,7 @@ function setupLabel(stage: string): string {
 }
 function jobLabel(stage: string, percent: number): string {
   switch (stage) {
+    case "queued": return "Queued";
     case "downloading": return `Downloading ${percent.toFixed(0)}%`;
     case "processing": return "Finishing up…";
     case "compressing": return "Compressing to size…";
@@ -26,6 +27,36 @@ function jobLabel(stage: string, percent: number): string {
 }
 
 interface DlJob { stage: string; percent: number; message?: string }
+
+function jobProgress(job: DlJob): number {
+  if (job.stage === "queued") return 0;
+  if (job.stage === "downloading") return job.percent;
+  return 100;
+}
+
+const VIDEO_FORMATS = [
+  { value: "mp4", label: "MP4" },
+  { value: "webm", label: "WebM" },
+  { value: "mkv", label: "MKV" },
+  { value: "mov", label: "MOV" },
+  { value: "avi", label: "AVI" },
+] as const;
+
+const AUDIO_FORMATS = [
+  { value: "mp3", label: "MP3" },
+  { value: "m4a", label: "M4A" },
+  { value: "wav", label: "WAV" },
+  { value: "flac", label: "FLAC" },
+  { value: "opus", label: "Opus" },
+  { value: "aac", label: "AAC" },
+  { value: "vorbis", label: "Vorbis (.ogg)" },
+] as const;
+
+type DownloadFormat = typeof VIDEO_FORMATS[number]["value"] | typeof AUDIO_FORMATS[number]["value"];
+
+function isVideoFormat(format: DownloadFormat): boolean {
+  return VIDEO_FORMATS.some((f) => f.value === format);
+}
 
 export function DownloaderView({
   downloads, notify, onPin, onDelete, onRename, onContextMenu,
@@ -40,10 +71,11 @@ export function DownloaderView({
   const [ready, setReady] = useState<boolean | null>(null);
   const [setup, setSetup] = useState<{ stage: string; error?: string } | null>(null);
   const [url, setUrl] = useState("");
-  const [format, setFormat] = useState<"mp4" | "mp3">("mp4");
+  const [format, setFormat] = useState<DownloadFormat>("mp4");
   const [quality, setQuality] = useState("best");
   const [targetMb, setTargetMb] = useState(0);
   const [jobs, setJobs] = useState<Record<string, DlJob>>({});
+  const isVideo = isVideoFormat(format);
 
   useEffect(() => {
     invoke<boolean>("downloader_ready").then(setReady).catch(() => setReady(false));
@@ -101,32 +133,38 @@ export function DownloaderView({
               onChange={(e) => setUrl(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") download(); e.stopPropagation(); }}
             />
-            <div className="dl-seg-row">
-              <button className={`dl-seg${format === "mp4" ? " on" : ""}`} onClick={() => setFormat("mp4")}>MP4</button>
-              <button className={`dl-seg${format === "mp3" ? " on" : ""}`} onClick={() => setFormat("mp3")}>MP3</button>
-            </div>
+            <label className="dl-field"><span>Format</span>
+              <select value={format} onMouseDown={focus} onChange={(e) => setFormat(e.target.value as DownloadFormat)}>
+                <optgroup label="Video">
+                  {VIDEO_FORMATS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+                </optgroup>
+                <optgroup label="Audio">
+                  {AUDIO_FORMATS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+                </optgroup>
+              </select>
+            </label>
+            {isVideo && (
+              <label className="dl-field"><span>Quality</span>
+                <select value={quality} onMouseDown={focus} onChange={(e) => setQuality(e.target.value)}>
+                  <option value="best">Best</option>
+                  <option value="2160">4K</option>
+                  <option value="1440">1440p</option>
+                  <option value="1080">1080p</option>
+                  <option value="720">720p</option>
+                  <option value="480">480p</option>
+                </select>
+              </label>
+            )}
             {format === "mp4" && (
-              <>
-                <label className="dl-field"><span>Quality</span>
-                  <select value={quality} onMouseDown={focus} onChange={(e) => setQuality(e.target.value)}>
-                    <option value="best">Best</option>
-                    <option value="2160">4K</option>
-                    <option value="1440">1440p</option>
-                    <option value="1080">1080p</option>
-                    <option value="720">720p</option>
-                    <option value="480">480p</option>
-                  </select>
-                </label>
-                <label className="dl-field"><span>Fit to size</span>
-                  <select value={targetMb} onMouseDown={focus} onChange={(e) => setTargetMb(Number(e.target.value))}>
-                    <option value={0}>No limit</option>
-                    <option value={10}>Discord · 10 MB</option>
-                    <option value={25}>25 MB</option>
-                    <option value={50}>50 MB</option>
-                    <option value={100}>100 MB</option>
-                  </select>
-                </label>
-              </>
+              <label className="dl-field"><span>Fit to size</span>
+                <select value={targetMb} onMouseDown={focus} onChange={(e) => setTargetMb(Number(e.target.value))}>
+                  <option value={0}>No limit</option>
+                  <option value={10}>Discord · 10 MB</option>
+                  <option value={25}>25 MB</option>
+                  <option value={50}>50 MB</option>
+                  <option value={100}>100 MB</option>
+                </select>
+              </label>
             )}
             <button className="dl-btn primary" onClick={download} disabled={!url.trim()}>Download</button>
             {activeJobs.length > 0 && (
@@ -134,7 +172,7 @@ export function DownloaderView({
                 {activeJobs.map(([id, j]) => (
                   <div className={`dl-job${j.stage === "error" ? " err" : ""}`} key={id}>
                     <div className="dl-job-bar">
-                      <div className="dl-job-fill" style={{ width: `${j.stage === "downloading" ? j.percent : 100}%` }} />
+                      <div className="dl-job-fill" style={{ width: `${jobProgress(j)}%` }} />
                     </div>
                     <span className="dl-job-label">{jobLabel(j.stage, j.percent)}</span>
                   </div>

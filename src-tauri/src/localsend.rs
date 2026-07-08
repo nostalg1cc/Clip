@@ -212,17 +212,17 @@ struct UploadSession {
 pub struct LocalSendState {
     pub enabled: AtomicBool,
     fingerprint: String,
-    alias: String,
+    alias: Mutex<String>,
     peers: Mutex<HashMap<String, PeerInfo>>,
     sessions: Mutex<HashMap<String, UploadSession>>,
 }
 
 impl LocalSendState {
-    pub fn new(fingerprint: String, enabled: bool) -> Self {
+    pub fn new(fingerprint: String, enabled: bool, alias: String) -> Self {
         Self {
             enabled: AtomicBool::new(enabled),
             fingerprint,
-            alias: "Clip".to_string(),
+            alias: Mutex::new(alias),
             peers: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
         }
@@ -230,7 +230,7 @@ impl LocalSendState {
 
     fn device_info(&self) -> DeviceInfo {
         DeviceInfo {
-            alias: self.alias.clone(),
+            alias: self.alias.lock().unwrap_or_else(|e| e.into_inner()).clone(),
             version: PROTOCOL_VERSION.to_string(),
             device_model: Some("Windows".to_string()),
             device_type: Some("desktop".to_string()),
@@ -239,6 +239,18 @@ impl LocalSendState {
             protocol: Some("https".to_string()),
             download: false,
         }
+    }
+
+    pub fn alias(&self) -> String {
+        self.alias.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    pub fn set_alias(&self, alias: String) {
+        *self.alias.lock().unwrap_or_else(|e| e.into_inner()) = alias;
+    }
+
+    pub fn fingerprint(&self) -> String {
+        self.fingerprint.clone()
     }
 }
 
@@ -580,6 +592,10 @@ fn local_lan_ip() -> Option<Ipv4Addr> {
         std::net::IpAddr::V4(v4) => Some(v4),
         std::net::IpAddr::V6(_) => None,
     }
+}
+
+pub fn local_device_address() -> Option<String> {
+    local_lan_ip().map(|ip| format!("{ip}:{LOCALSEND_PORT}"))
 }
 
 /// Force outgoing multicast packets out the given interface. Without this,

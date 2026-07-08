@@ -1,11 +1,13 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { Card, ColorCard } from "./components/ClipCard";
+import { AmbientBackdrop } from "./components/AmbientBackdrop";
 import { ContextMenu, type CtxMenuState } from "./components/ContextMenu";
 import { DownloaderView } from "./components/DownloaderView";
 import { EmojiView, loadRecentEmojis } from "./components/EmojiView";
+import { SettingsView } from "./components/SettingsView";
 import { TopBar } from "./components/TopBar";
+import { VirtualClipStrip } from "./components/VirtualClipStrip";
 import { useDragScroll } from "./hooks/useDragScroll";
 import {
   GROUP_LABEL,
@@ -17,6 +19,9 @@ import {
   type Group,
 } from "./clipUtils";
 import "./App.css";
+
+type BackdropMode = "acrylic" | "mica" | "adaptive";
+type AppSettings = { backdrop: BackdropMode };
 // ── App ────────────────────────────────────────────────────────────────────────
 
 function App() {
@@ -28,8 +33,11 @@ function App() {
   const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const displayedRef = useRef<ClipboardEntry[]>([]);
+  const [clipViewport, setClipViewport] = useState({ left: 0, width: 900, height: 320 });
+  const [backdropMode, setBackdropMode] = useState<BackdropMode>("acrylic");
   const toastTimer = useRef<number | undefined>(undefined);
   const fadeRaf = useRef<number | undefined>(undefined);
+  const clipViewportRaf = useRef<number | undefined>(undefined);
   const drag = useDragScroll(scrollRef);
 
   const notify = useCallback((msg: string) => {
@@ -52,8 +60,29 @@ function App() {
     });
   }, [updateFadesNow]);
 
+  const updateClipViewportNow = useCallback(() => {
+    const el = scrollRef.current; if (!el) return;
+    const style = window.getComputedStyle(el);
+    const padTop = parseFloat(style.paddingTop) || 0;
+    const padBottom = parseFloat(style.paddingBottom) || 0;
+    setClipViewport({
+      left: el.scrollLeft,
+      width: el.clientWidth,
+      height: Math.max(80, el.clientHeight - padTop - padBottom),
+    });
+  }, []);
+
+  const scheduleUpdateClipViewport = useCallback(() => {
+    if (clipViewportRaf.current !== undefined) return;
+    clipViewportRaf.current = window.requestAnimationFrame(() => {
+      clipViewportRaf.current = undefined;
+      updateClipViewportNow();
+    });
+  }, [updateClipViewportNow]);
+
   useEffect(() => () => {
     if (fadeRaf.current !== undefined) window.cancelAnimationFrame(fadeRaf.current);
+    if (clipViewportRaf.current !== undefined) window.cancelAnimationFrame(clipViewportRaf.current);
   }, []);
 
   useEffect(() => {
@@ -72,6 +101,20 @@ function App() {
 
   useEffect(() => {
     invoke<ClipboardEntry[]>("get_history").then(setEntries).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    invoke<AppSettings>("get_app_settings")
+      .then((settings) => setBackdropMode(settings.backdrop))
+      .catch(() => {});
+    const unlistenBackdrop = listen<BackdropMode>("backdrop-changed", (event) => {
+      if (event.payload === "acrylic" || event.payload === "mica" || event.payload === "adaptive") {
+        setBackdropMode(event.payload);
+      }
+    });
+    return () => {
+      unlistenBackdrop.then((fn) => fn());
+    };
   }, []);
 
   useEffect(() => {
@@ -124,8 +167,21 @@ function App() {
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollLeft = 0;
     scheduleUpdateFades();
-  }, [filter, search, scheduleUpdateFades]);
+    scheduleUpdateClipViewport();
+  }, [filter, search, scheduleUpdateFades, scheduleUpdateClipViewport]);
 
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    const onResize = () => scheduleUpdateClipViewport();
+    const resizeObserver = el && "ResizeObserver" in window ? new ResizeObserver(onResize) : null;
+    if (el) resizeObserver?.observe(el);
+    window.addEventListener("resize", onResize);
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", onResize);
+    };
+  }, [scheduleUpdateClipViewport]);
   const handlePin = useCallback(async (id: string) => {
     const newPinned = await invoke<boolean>("toggle_pin", { id });
     setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, pinned: newPinned } : e)));
@@ -162,13 +218,14 @@ function App() {
     for (const g of GROUP_ORDER) if (groupCounts[g]) out.push({ key: g, label: GROUP_LABEL[g], count: groupCounts[g] });
     out.push({ key: "emoji", label: "Emoji" });
     out.push({ key: "downloader", label: "Downloader" });
+    out.push({ key: "settings", label: "Settings" });
     return out;
   }, [entries.length, groupCounts]);
 
   const displayed = useMemo(() => {
     let list = entries;
     if (filter === "pinned") list = list.filter((e) => e.pinned);
-    else if (filter !== "all" && filter !== "emoji") list = list.filter((e) => filterGroup(effectiveKind(e)) === filter);
+    else if (filter !== "all" && filter !== "emoji" && filter !== "settings" && filter !== "downloader") list = list.filter((e) => filterGroup(effectiveKind(e)) === filter);
     if (search.trim()) {
       const sq = search.toLowerCase();
       list = list.filter((e) =>
@@ -178,27 +235,29 @@ function App() {
   }, [entries, search, filter]);
   displayedRef.current = displayed;
 
-  useEffect(() => { scheduleUpdateFades(); }, [displayed.length, scheduleUpdateFades]);
+  useLayoutEffect(() => { updateClipViewportNow(); }, [displayed.length, filter, search, updateClipViewportNow]);
+  useEffect(() => { scheduleUpdateFades(); scheduleUpdateClipViewport(); }, [displayed.length, scheduleUpdateFades, scheduleUpdateClipViewport]);
 
-  const emojiIcon = loadRecentEmojis()[0] || "😀";
+  const emojiIcon = loadRecentEmojis()[0] || "\u{1F600}";
   const emptyMsg = search
     ? `No results for "${search}"`
     : filter === "pinned" ? "No pinned clips yet"
-    : filter !== "all" ? `No ${String(filter)} clips yet`
+    : filter !== "all" && filter !== "settings" ? `No ${String(filter)} clips yet`
     : "Copy something to get started";
 
   return (
     <div className="app">
+      <AmbientBackdrop active={backdropMode === "adaptive"} entries={displayed} viewport={clipViewport} />
       <TopBar
         search={search} onSearch={setSearch}
         filter={filter} onFilter={setFilter}
         total={entries.length} tabs={tabs} onClear={handleClear} emojiIcon={emojiIcon}
       />
       <div
-        className={`cards-row${filter === "emoji" ? " is-emoji" : ""}${filter === "downloader" ? " is-downloader" : ""}`}
+        className={`cards-row${filter === "emoji" ? " is-emoji" : ""}${filter === "downloader" ? " is-downloader" : ""}${filter === "settings" ? " is-settings" : ""}`}
         ref={scrollRef}
-        onScroll={scheduleUpdateFades}
-        {...(filter === "emoji" || filter === "downloader" ? {} : drag)}
+        onScroll={() => { updateFadesNow(); updateClipViewportNow(); }}
+        {...(filter === "emoji" || filter === "downloader" || filter === "settings" ? {} : drag)}
       >
         {filter === "downloader" ? (
           <DownloaderView
@@ -208,18 +267,20 @@ function App() {
           />
         ) : filter === "emoji" ? (
           <EmojiView search={search} notify={notify} />
+        ) : filter === "settings" ? (
+          <SettingsView notify={notify} />
         ) : displayed.length === 0 ? (
           <div className="empty-state">{emptyMsg}</div>
         ) : (
-          displayed.map((entry, i) => {
-            const showDivider = i > 0 && displayed[i - 1].pinned && !entry.pinned;
-            const card = effectiveKind(entry) === "color"
-              ? <ColorCard key={entry.id} entry={entry} onPin={handlePin} onDelete={handleDelete} notify={notify} onContextMenu={openContextMenu} />
-              : <Card key={entry.id} entry={entry} onPin={handlePin} onDelete={handleDelete} onRename={handleRename} onContextMenu={openContextMenu} />;
-            return showDivider
-              ? <Fragment key={entry.id}><div className="pin-divider" />{card}</Fragment>
-              : card;
-          })
+          <VirtualClipStrip
+            entries={displayed}
+            viewport={clipViewport}
+            notify={notify}
+            onPin={handlePin}
+            onDelete={handleDelete}
+            onRename={handleRename}
+            onContextMenu={openContextMenu}
+          />
         )}
       </div>
       {toast && <div className="toast">{toast}</div>}

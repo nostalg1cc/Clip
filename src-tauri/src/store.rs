@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 const MAX_TEXT_CLIPS: usize = 500;
 const MAX_IMAGE_CLIPS: usize = 30;
-const CLIP_TTL_MS: u64 = 24 * 60 * 60 * 1000; // unpinned clips expire after 24h
+pub const DEFAULT_PURGE_HOURS: u32 = 24;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS clips (
@@ -221,9 +221,17 @@ impl Store {
         let _ = conn.execute("DELETE FROM clips WHERE pinned=0", []);
     }
 
+    pub fn purge_hours(&self) -> u32 {
+        self.get_setting("purge_hours")
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|h| (1..=720).contains(h))
+            .unwrap_or(DEFAULT_PURGE_HOURS)
+    }
+
     /// Delete unpinned clips older than the TTL. Returns true if anything changed.
     pub fn prune_expired(&self) -> bool {
-        let cutoff = super::now_millis().saturating_sub(CLIP_TTL_MS) as i64;
+        let ttl_ms = self.purge_hours() as u64 * 60 * 60 * 1000;
+        let cutoff = super::now_millis().saturating_sub(ttl_ms) as i64;
         let conn = self.lock();
         let ids: Vec<String> =
             match conn.prepare("SELECT id FROM clips WHERE pinned=0 AND timestamp < ?1") {

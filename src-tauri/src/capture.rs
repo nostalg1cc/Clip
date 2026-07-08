@@ -45,6 +45,13 @@ impl CaptureState {
             .is_some_and(|capture| capture.id == id)
     }
 
+    fn has_current(&self) -> bool {
+        self.current
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+    }
+
     fn take_current(&self) -> Option<image::DynamicImage> {
         self.current
             .lock()
@@ -253,8 +260,6 @@ pub fn start_screen_capture(app: &AppHandle) {
         let _ = overlay.emit_to("capture", "capture-reset", ());
         let _ = overlay.set_position(PhysicalPosition::new(pos.x, pos.y));
         let _ = overlay.set_size(PhysicalSize::new(size.width, size.height));
-        show_overlay(&overlay);
-        let _ = overlay.set_focus();
 
         let app2 = app.clone();
         let overlay2 = overlay.clone();
@@ -286,6 +291,18 @@ pub fn start_screen_capture(app: &AppHandle) {
             });
         });
     });
+}
+
+#[tauri::command]
+pub fn capture_show_ready(app: AppHandle) {
+    if !app.state::<CaptureState>().has_current() {
+        return;
+    }
+    if let Some(w) = app.get_webview_window("capture") {
+        disable_window_animations(&w);
+        show_overlay(&w);
+        let _ = w.set_focus();
+    }
 }
 
 #[tauri::command]

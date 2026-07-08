@@ -28,7 +28,7 @@ export function TopBar({
         className="fluent-search"
         size="small"
         appearance="filled-darker"
-        placeholder={filter === "emoji" ? "Search emoji…" : "Search clips…"}
+        placeholder={filter === "emoji" ? "Search emoji…" : filter === "settings" ? "Settings" : "Search clips…"}
         value={search}
         // The bar floats without focus (so pasting never dismisses password
         // popups); clicking the search box asks the backend to take focus so
@@ -57,7 +57,7 @@ export function TopBar({
         </TabList>
       </div>
 
-      {filter !== "emoji" && total > 0 && (
+      {filter !== "emoji" && filter !== "settings" && total > 0 && (
         <Button
           size="small"
           appearance={confirming ? "primary" : "subtle"}

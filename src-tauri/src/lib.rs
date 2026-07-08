@@ -1,10 +1,11 @@
+use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
-use tauri::menu::{CheckMenuItem, Menu, MenuItem};
+use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use window_vibrancy::{clear_acrylic, clear_mica};
@@ -68,7 +69,7 @@ impl PasteGuard {
 // ── Theme (light/dark acrylic) ────────────────────────────────────────────────
 
 struct ThemeState(Mutex<bool>); // true = light
-struct BackdropState(Mutex<bool>); // true = acrylic, false = mica
+struct BackdropState(Mutex<String>); // acrylic | mica | adaptive
 struct AlwaysOnTopState(Mutex<bool>); // true = keep the bar above other windows
 
 /// HWND (as isize) of the window that was focused right before we showed the
@@ -298,8 +299,8 @@ fn update_win_v_override(_app: &tauri::AppHandle, _enabled: bool) {}
 ///
 /// state: 3 = blur-behind ("mica"-like), 4 = acrylic-blur-behind. Dark mode is
 /// intentionally a touch darker than a plain grey.
-fn accent_for(light: bool, acrylic: bool) -> (u32, (u8, u8, u8, u8)) {
-    let state = if acrylic { 4 } else { 3 };
+fn accent_for(light: bool, mode: &str) -> (u32, (u8, u8, u8, u8)) {
+    let state = if mode == "mica" { 3 } else { 4 };
     let tint = if light {
         (244, 245, 248, 180)
     } else {
@@ -376,27 +377,28 @@ fn apply_accent(window: &tauri::WebviewWindow, state: u32, tint: (u8, u8, u8, u8
 #[cfg(not(target_os = "windows"))]
 fn apply_accent(_window: &tauri::WebviewWindow, _state: u32, _tint: (u8, u8, u8, u8)) {}
 
-/// Apply the chosen backdrop (acrylic or mica) in the chosen theme (light/dark)
-/// and notify the webview so it can swap its CSS palette.
-fn apply_backdrop(window: &tauri::WebviewWindow, light: bool, acrylic: bool) {
-    // Make sure the Win11 system backdrop is OFF — on our always-inactive window
+/// Apply the chosen backdrop in the chosen theme and notify the webview.
+fn apply_backdrop(window: &tauri::WebviewWindow, light: bool, mode: &str) {
+    // Make sure the Win11 system backdrop is OFF -- on our always-inactive window
     // it renders near-opaque. The legacy accent below stays translucent.
     let _ = clear_acrylic(window);
     let _ = clear_mica(window);
 
-    let (state, tint) = accent_for(light, acrylic);
+    let material_mode = if mode == "adaptive" { "acrylic" } else { mode };
+    let (state, tint) = accent_for(light, material_mode);
     apply_accent(window, state, tint);
 
     let _ = window.emit("theme-changed", if light { "light" } else { "dark" });
+    let _ = window.emit("backdrop-changed", mode);
 }
 
 fn apply_theme(window: &tauri::WebviewWindow, light: bool) {
-    let acrylic = {
+    let mode = {
         let bs = window.state::<BackdropState>();
-        let val = *bs.0.lock().unwrap_or_else(|e| e.into_inner());
-        val
+        let guard = bs.0.lock().unwrap_or_else(|e| e.into_inner());
+        guard.clone()
     };
-    apply_backdrop(window, light, acrylic);
+    apply_backdrop(window, light, &mode);
 }
 
 /// Re-assert the accent while the window is visible (cheap, idempotent). Kept as
@@ -407,12 +409,18 @@ fn reassert_backdrop(window: &tauri::WebviewWindow) {
         .0
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    let acrylic = *window
+    let mode = window
         .state::<BackdropState>()
         .0
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let (state, tint) = accent_for(light, acrylic);
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let material_mode = if mode == "adaptive" {
+        "acrylic"
+    } else {
+        mode.as_str()
+    };
+    let (state, tint) = accent_for(light, material_mode);
     apply_accent(window, state, tint);
 }
 
@@ -426,6 +434,174 @@ fn get_theme(theme: tauri::State<'_, ThemeState>) -> String {
     }
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppSettings {
+    version: String,
+    autostart: bool,
+    theme: String,
+    backdrop: String,
+    always_on_top: bool,
+    win_v_override: bool,
+    localsend_enabled: bool,
+    localsend_alias: String,
+    localsend_address: Option<String>,
+    localsend_fingerprint: String,
+    purge_hours: u32,
+}
+
+fn read_app_settings(app: &AppHandle) -> AppSettings {
+    let store = app.state::<Store>();
+    let theme = match store.get_setting("theme").as_deref() {
+        Some("light") => "light".to_string(),
+        Some("dark") => "dark".to_string(),
+        _ => "system".to_string(),
+    };
+    let backdrop = match store.get_setting("backdrop").as_deref() {
+        Some("mica") => "mica".to_string(),
+        Some("adaptive") => "adaptive".to_string(),
+        _ => "acrylic".to_string(),
+    };
+    let always_on_top = *app
+        .state::<AlwaysOnTopState>()
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let win_v_override = *app
+        .state::<WinVOverrideState>()
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let ls = app.state::<localsend::LocalSendState>();
+    AppSettings {
+        version: app.package_info().version.to_string(),
+        autostart: app.autolaunch().is_enabled().unwrap_or(false),
+        theme,
+        backdrop,
+        always_on_top,
+        win_v_override,
+        localsend_enabled: ls.enabled.load(std::sync::atomic::Ordering::Relaxed),
+        localsend_alias: ls.alias(),
+        localsend_address: localsend::local_device_address(),
+        localsend_fingerprint: ls.fingerprint(),
+        purge_hours: store.purge_hours(),
+    }
+}
+
+#[tauri::command]
+fn get_app_settings(app: AppHandle) -> AppSettings {
+    read_app_settings(&app)
+}
+
+#[tauri::command]
+fn set_app_setting(app: AppHandle, key: String, value: String) -> AppSettings {
+    match key.as_str() {
+        "theme" => {
+            let normalized = match value.as_str() {
+                "light" => "light",
+                "dark" => "dark",
+                _ => "system",
+            };
+            app.state::<Store>().set_setting("theme", normalized);
+            let new_light = if normalized == "system" {
+                windows_is_light()
+            } else {
+                normalized == "light"
+            };
+            *app.state::<ThemeState>()
+                .0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = new_light;
+            if let Some(window) = app.get_webview_window("main") {
+                apply_theme(&window, new_light);
+            }
+        }
+        "backdrop" => {
+            let mode = match value.as_str() {
+                "mica" => "mica",
+                "adaptive" => "adaptive",
+                _ => "acrylic",
+            };
+            app.state::<Store>().set_setting("backdrop", mode);
+            *app.state::<BackdropState>()
+                .0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = mode.to_string();
+            if let Some(window) = app.get_webview_window("main") {
+                let light = *app
+                    .state::<ThemeState>()
+                    .0
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                apply_backdrop(&window, light, mode);
+            }
+        }
+        "always_on_top" => {
+            let enabled = value == "1" || value == "true";
+            app.state::<Store>()
+                .set_setting("always_on_top", if enabled { "1" } else { "0" });
+            *app.state::<AlwaysOnTopState>()
+                .0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = enabled;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_always_on_top(enabled);
+            }
+        }
+        "win_v_override" => {
+            let enabled = value == "1" || value == "true";
+            app.state::<Store>()
+                .set_setting("win_v_override", if enabled { "1" } else { "0" });
+            *app.state::<WinVOverrideState>()
+                .0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = enabled;
+            update_win_v_override(&app, enabled);
+        }
+        "localsend_enabled" => {
+            let enabled = value == "1" || value == "true";
+            let ls = app.state::<localsend::LocalSendState>();
+            ls.enabled
+                .store(enabled, std::sync::atomic::Ordering::Relaxed);
+            app.state::<Store>()
+                .set_setting("localsend_enabled", if enabled { "1" } else { "0" });
+            if enabled {
+                let app_for_fw = app.clone();
+                thread::spawn(move || {
+                    localsend::ensure_firewall_rule(&app_for_fw.state::<Store>())
+                });
+            }
+        }
+        "localsend_alias" => {
+            let alias = value.trim();
+            let alias = if alias.is_empty() { "Clip" } else { alias };
+            app.state::<Store>().set_setting("localsend_alias", alias);
+            app.state::<localsend::LocalSendState>()
+                .set_alias(alias.to_string());
+        }
+        "purge_hours" => {
+            let hours = value
+                .parse::<u32>()
+                .unwrap_or(store::DEFAULT_PURGE_HOURS)
+                .clamp(1, 720);
+            app.state::<Store>()
+                .set_setting("purge_hours", &hours.to_string());
+            let store = app.state::<Store>();
+            store.prune_expired();
+        }
+        "autostart" => {
+            let enabled = value == "1" || value == "true";
+            let mgr = app.autolaunch();
+            if enabled {
+                let _ = mgr.enable();
+            } else {
+                let _ = mgr.disable();
+            }
+        }
+        _ => {}
+    }
+    read_app_settings(&app)
+}
 /// Let the bar take focus so the user can type in the search box. Called from
 /// the front-end on search-box click; clears WS_EX_NOACTIVATE first so the
 /// otherwise non-activating window can actually come to the foreground.
@@ -1826,6 +2002,7 @@ pub fn run() {
         )
         .manage(PasteGuard::new())
         .manage(PrevForeground(Mutex::new(0)))
+        .manage(downloader::DownloaderQueue::new())
         .invoke_handler(tauri::generate_handler![
             paste_clip,
             paste_text,
@@ -1847,9 +2024,12 @@ pub fn run() {
             downloader::setup_downloader,
             downloader::start_download,
             localsend::localsend_list_peers,
+            get_app_settings,
+            set_app_setting,
             localsend::localsend_send,
             localsend::localsend_send_to_ip,
             localsend::localsend_get_history,
+            capture::capture_show_ready,
             capture::capture_cancel,
             capture::capture_finish_selection
         ])
@@ -1881,11 +2061,12 @@ pub fn run() {
             app.manage(ThemeState(Mutex::new(light)));
 
             // Resolve backdrop material: explicit override, else acrylic.
-            let acrylic = !matches!(
-                app.state::<Store>().get_setting("backdrop").as_deref(),
-                Some("mica")
-            );
-            app.manage(BackdropState(Mutex::new(acrylic)));
+            let backdrop = match app.state::<Store>().get_setting("backdrop").as_deref() {
+                Some("mica") => "mica".to_string(),
+                Some("adaptive") => "adaptive".to_string(),
+                _ => "acrylic".to_string(),
+            };
+            app.manage(BackdropState(Mutex::new(backdrop)));
 
             // Resolve always-on-top: explicit override, else on.
             let always_on_top = !matches!(
@@ -1906,20 +2087,21 @@ pub fn run() {
             // LocalSend — discovery + send/receive. Off by default (it's a
             // background listener + a periodic multicast announce — no sense
             // paying for either until it's actually wanted). The "LocalSend"
-            // tray toggle flips LocalSendState::enabled at runtime, and the
+            // settings toggle flips LocalSendState::enabled at runtime, and the
             // discovery/HTTP threads bind/release their sockets in response
             // rather than just idling while "disabled".
-            let localsend_enabled = matches!(
-                app.state::<Store>()
-                    .get_setting("localsend_enabled")
-                    .as_deref(),
-                Some("1")
-            );
-            let localsend_fingerprint =
-                localsend::load_or_create_fingerprint(&app.state::<Store>());
+            let store = app.state::<Store>();
+            let localsend_enabled =
+                matches!(store.get_setting("localsend_enabled").as_deref(), Some("1"));
+            let localsend_alias = store
+                .get_setting("localsend_alias")
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| "Clip".to_string());
+            let localsend_fingerprint = localsend::load_or_create_fingerprint(&store);
             app.manage(localsend::LocalSendState::new(
                 localsend_fingerprint,
                 localsend_enabled,
+                localsend_alias,
             ));
             localsend::start(app.handle().clone());
             if localsend_enabled {
@@ -1999,172 +2181,22 @@ pub fn run() {
                 });
             }
 
-            let autostart_on = app.autolaunch().is_enabled().unwrap_or(false);
-            let startup_item = CheckMenuItem::with_id(
-                app,
-                "toggle_autostart",
-                "Run at startup",
-                true,
-                autostart_on,
-                None::<&str>,
-            )?;
-            let light_item = CheckMenuItem::with_id(
-                app,
-                "toggle_theme",
-                "Light mode",
-                true,
-                light,
-                None::<&str>,
-            )?;
-            let acrylic_item = CheckMenuItem::with_id(
-                app,
-                "toggle_backdrop",
-                "Acrylic",
-                true,
-                acrylic,
-                None::<&str>,
-            )?;
-            let ontop_item = CheckMenuItem::with_id(
-                app,
-                "toggle_ontop",
-                "Always on top",
-                true,
-                always_on_top,
-                None::<&str>,
-            )?;
-            let win_v_item = CheckMenuItem::with_id(
-                app,
-                "toggle_win_v",
-                "Use Win+V",
-                true,
-                win_v_override,
-                None::<&str>,
-            )?;
-            let localsend_item = CheckMenuItem::with_id(
-                app,
-                "toggle_localsend",
-                "LocalSend",
-                true,
-                localsend_enabled,
-                None::<&str>,
-            )?;
+            let show_hide = MenuItem::with_id(app, "show_hide", "Show / hide", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(
-                app,
-                &[
-                    &startup_item,
-                    &light_item,
-                    &acrylic_item,
-                    &ontop_item,
-                    &win_v_item,
-                    &localsend_item,
-                    &quit,
-                ],
-            )?;
-            let li = light_item.clone();
-            let si = startup_item.clone();
-            let ai = acrylic_item.clone();
-            let oi = ontop_item.clone();
-            let wi = win_v_item.clone();
-            let lsi = localsend_item.clone();
+            let menu = Menu::with_items(app, &[&show_hide, &quit])?;
             let tooltip = if win_v_override {
-                "Clip — Win+V"
+                "Clip - Win+V"
             } else {
-                "Clip — Shift+Alt+V"
+                "Clip - Shift+Alt+V"
             };
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
+                .show_menu_on_left_click(false)
                 .tooltip(tooltip)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
+                    "show_hide" => toggle_window(app),
                     "quit" => app.exit(0),
-                    "toggle_theme" => {
-                        let new_light = {
-                            let ts = app.state::<ThemeState>();
-                            let mut cur = ts.0.lock().unwrap_or_else(|e| e.into_inner());
-                            *cur = !*cur;
-                            *cur
-                        };
-                        let _ = li.set_checked(new_light);
-                        app.state::<Store>()
-                            .set_setting("theme", if new_light { "light" } else { "dark" });
-                        if let Some(window) = app.get_webview_window("main") {
-                            apply_theme(&window, new_light);
-                        }
-                    }
-                    "toggle_backdrop" => {
-                        let new_acrylic = {
-                            let bs = app.state::<BackdropState>();
-                            let mut cur = bs.0.lock().unwrap_or_else(|e| e.into_inner());
-                            *cur = !*cur;
-                            *cur
-                        };
-                        let _ = ai.set_checked(new_acrylic);
-                        app.state::<Store>()
-                            .set_setting("backdrop", if new_acrylic { "acrylic" } else { "mica" });
-                        if let Some(window) = app.get_webview_window("main") {
-                            let light = {
-                                let ts = app.state::<ThemeState>();
-                                let val = *ts.0.lock().unwrap_or_else(|e| e.into_inner());
-                                val
-                            };
-                            apply_backdrop(&window, light, new_acrylic);
-                        }
-                    }
-                    "toggle_ontop" => {
-                        let new_ontop = {
-                            let s = app.state::<AlwaysOnTopState>();
-                            let mut cur = s.0.lock().unwrap_or_else(|e| e.into_inner());
-                            *cur = !*cur;
-                            *cur
-                        };
-                        let _ = oi.set_checked(new_ontop);
-                        app.state::<Store>()
-                            .set_setting("always_on_top", if new_ontop { "1" } else { "0" });
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.set_always_on_top(new_ontop);
-                        }
-                    }
-                    "toggle_win_v" => {
-                        let new_override = {
-                            let ws = app.state::<WinVOverrideState>();
-                            let mut cur = ws.0.lock().unwrap_or_else(|e| e.into_inner());
-                            *cur = !*cur;
-                            *cur
-                        };
-                        let _ = wi.set_checked(new_override);
-                        app.state::<Store>()
-                            .set_setting("win_v_override", if new_override { "1" } else { "0" });
-                        update_win_v_override(app, new_override);
-                    }
-                    "toggle_localsend" => {
-                        let ls = app.state::<localsend::LocalSendState>();
-                        let new_enabled = !ls.enabled.load(std::sync::atomic::Ordering::Relaxed);
-                        ls.enabled
-                            .store(new_enabled, std::sync::atomic::Ordering::Relaxed);
-                        let _ = lsi.set_checked(new_enabled);
-                        app.state::<Store>()
-                            .set_setting("localsend_enabled", if new_enabled { "1" } else { "0" });
-                        if new_enabled {
-                            // May show a UAC prompt (see ensure_firewall_rule) —
-                            // off the tray-event thread so the menu isn't stuck.
-                            let app_for_fw = app.clone();
-                            thread::spawn(move || {
-                                localsend::ensure_firewall_rule(&app_for_fw.state::<Store>())
-                            });
-                        }
-                    }
-                    "toggle_autostart" => {
-                        let mgr = app.autolaunch();
-                        let enabled = mgr.is_enabled().unwrap_or(false);
-                        if enabled {
-                            let _ = mgr.disable();
-                        } else {
-                            let _ = mgr.enable();
-                        }
-                        let now = mgr.is_enabled().unwrap_or(!enabled);
-                        let _ = si.set_checked(now);
-                    }
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {

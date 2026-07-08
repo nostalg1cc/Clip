@@ -30,6 +30,7 @@ export default function CaptureOverlay() {
     const un = listen<string>("capture-frame", (e) => {
       reset();
       setFrame(e.payload);
+      window.setTimeout(() => invoke("capture_show_ready").catch(() => {}), 0);
     });
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key === "Escape") invoke("capture_cancel").catch(() => {});
