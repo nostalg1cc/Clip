@@ -57,7 +57,11 @@ struct PasteGuard {
 
 impl PasteGuard {
     fn new() -> Self {
-        Self { text: Mutex::new(None), skip_image: Mutex::new(false), skip_files: Mutex::new(false) }
+        Self {
+            text: Mutex::new(None),
+            skip_image: Mutex::new(false),
+            skip_files: Mutex::new(false),
+        }
     }
 }
 
@@ -75,8 +79,8 @@ struct PrevForeground(Mutex<isize>);
 /// Read the Windows "apps use light theme" preference (default: dark).
 #[cfg(target_os = "windows")]
 fn windows_is_light() -> bool {
-    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
     use windows::core::w;
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
     unsafe {
         let mut data: u32 = 0;
         let mut size = std::mem::size_of::<u32>() as u32;
@@ -94,14 +98,16 @@ fn windows_is_light() -> bool {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn windows_is_light() -> bool { false }
+fn windows_is_light() -> bool {
+    false
+}
 
 struct WinVOverrideState(Mutex<bool>);
 
 #[cfg(target_os = "windows")]
 fn get_registry_disabled_hotkeys() -> Option<String> {
-    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
     use windows::core::w;
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
     unsafe {
         let mut size: u32 = 0;
         let res = RegGetValueW(
@@ -116,7 +122,7 @@ fn get_registry_disabled_hotkeys() -> Option<String> {
         if res.0 != 0 || size == 0 {
             return None;
         }
-        
+
         let mut buf = vec![0u16; (size as usize / 2) + 1];
         let res = RegGetValueW(
             HKEY_CURRENT_USER,
@@ -138,8 +144,8 @@ fn get_registry_disabled_hotkeys() -> Option<String> {
 
 #[cfg(target_os = "windows")]
 fn set_registry_disabled_hotkeys(val: &str) -> bool {
-    use windows::Win32::System::Registry::{RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ};
     use windows::core::w;
+    use windows::Win32::System::Registry::{RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ};
     let subkey = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced");
     let value_name = w!("DisabledHotkeys");
     let wide_val: Vec<u16> = val.encode_utf16().chain(std::iter::once(0)).collect();
@@ -158,10 +164,10 @@ fn set_registry_disabled_hotkeys(val: &str) -> bool {
 
 #[cfg(target_os = "windows")]
 fn delete_registry_disabled_hotkeys() -> bool {
-    use windows::Win32::System::Registry::{
-        RegOpenKeyExW, RegDeleteValueW, RegCloseKey, HKEY_CURRENT_USER, KEY_SET_VALUE, HKEY
-    };
     use windows::core::w;
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegDeleteValueW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE,
+    };
     unsafe {
         let mut hkey = HKEY::default();
         let res = RegOpenKeyExW(
@@ -184,8 +190,8 @@ fn delete_registry_disabled_hotkeys() -> bool {
 /// Write a REG_SZ value under HKCU\Software\Clip (our own backup area).
 #[cfg(target_os = "windows")]
 fn write_clip_reg(name: &str, val: &str) {
-    use windows::Win32::System::Registry::{RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ};
     use windows::core::{w, PCWSTR};
+    use windows::Win32::System::Registry::{RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ};
     let name_w = encode_wide(name);
     let val_w = encode_wide(val);
     unsafe {
@@ -206,10 +212,10 @@ pub(crate) fn message_box(title: &str, text: &str) {
     let title = title.to_string();
     let text = text.to_string();
     thread::spawn(move || {
+        use windows::core::PCWSTR;
         use windows::Win32::UI::WindowsAndMessaging::{
             MessageBoxW, MB_ICONINFORMATION, MB_OK, MB_SETFOREGROUND, MB_TOPMOST,
         };
-        use windows::core::PCWSTR;
         let text_w = encode_wide(&text);
         let title_w = encode_wide(&title);
         unsafe {
@@ -227,7 +233,11 @@ pub(crate) fn message_box(title: &str, text: &str) {
 /// Windows clipboard-history popup works again once the override is off.
 #[cfg(target_os = "windows")]
 fn restore_disabled_hotkeys(app: &tauri::AppHandle) {
-    match app.state::<Store>().get_setting("disabled_hotkeys_backup").as_deref() {
+    match app
+        .state::<Store>()
+        .get_setting("disabled_hotkeys_backup")
+        .as_deref()
+    {
         Some(val) if !val.is_empty() && val != "__NONE__" => {
             let _ = set_registry_disabled_hotkeys(val);
         }
@@ -262,7 +272,11 @@ fn update_win_v_override(app: &tauri::AppHandle, enabled: bool) {
     }
 
     message_box(
-        if enabled { "Clip — Win+V enabled" } else { "Clip — Win+V restored" },
+        if enabled {
+            "Clip — Win+V enabled"
+        } else {
+            "Clip — Win+V restored"
+        },
         if enabled {
             "Win+V now opens Clip — and it stays that way across reboots.\n\n\
              (While enabled, the Windows clipboard-history popup is suppressed.)"
@@ -279,7 +293,6 @@ fn encode_wide(s: &str) -> Vec<u16> {
 
 #[cfg(not(target_os = "windows"))]
 fn update_win_v_override(_app: &tauri::AppHandle, _enabled: bool) {}
-
 
 /// Accent state + tint (r,g,b,a) for the current theme/material.
 ///
@@ -344,8 +357,7 @@ fn apply_accent(window: &tauri::WebviewWindow, state: u32, tint: (u8, u8, u8, u8
         if is_acrylic && a == 0 {
             a = 1; // acrylic dislikes a fully-zero alpha
         }
-        let gradient =
-            (r as u32) | ((g as u32) << 8) | ((b as u32) << 16) | ((a as u32) << 24);
+        let gradient = (r as u32) | ((g as u32) << 8) | ((b as u32) << 16) | ((a as u32) << 24);
         let mut policy = AccentPolicy {
             accent_state: state,
             accent_flags: if is_acrylic { 0 } else { 2 },
@@ -390,17 +402,28 @@ fn apply_theme(window: &tauri::WebviewWindow, light: bool) {
 /// Re-assert the accent while the window is visible (cheap, idempotent). Kept as
 /// a belt-and-suspenders call after each show.
 fn reassert_backdrop(window: &tauri::WebviewWindow) {
-    let light = *window.state::<ThemeState>().0.lock().unwrap_or_else(|e| e.into_inner());
-    let acrylic = *window.state::<BackdropState>().0.lock().unwrap_or_else(|e| e.into_inner());
+    let light = *window
+        .state::<ThemeState>()
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let acrylic = *window
+        .state::<BackdropState>()
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let (state, tint) = accent_for(light, acrylic);
     apply_accent(window, state, tint);
 }
 
-
 #[tauri::command]
 fn get_theme(theme: tauri::State<'_, ThemeState>) -> String {
     let light = *theme.0.lock().unwrap_or_else(|e| e.into_inner());
-    if light { "light".into() } else { "dark".into() }
+    if light {
+        "light".into()
+    } else {
+        "dark".into()
+    }
 }
 
 /// Let the bar take focus so the user can type in the search box. Called from
@@ -422,7 +445,10 @@ fn hide_window(window: tauri::WebviewWindow) {
 
 pub(crate) fn is_image_path(p: &std::path::Path) -> bool {
     matches!(
-        p.extension().and_then(|e| e.to_str()).map(|s| s.to_ascii_lowercase()).as_deref(),
+        p.extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_ascii_lowercase())
+            .as_deref(),
         Some(
             "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" | "tiff" | "tif"
                 | "avif" | "dds" | "exr" | "hdr" | "pnm" | "pbm" | "pgm" | "ppm" | "qoi" | "tga"
@@ -445,17 +471,23 @@ fn get_clipboard_files() -> Vec<String> {
     use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
     let mut files = Vec::new();
     unsafe {
-        if OpenClipboard(None).is_err() { return files; }
+        if OpenClipboard(None).is_err() {
+            return files;
+        }
         if let Ok(handle) = GetClipboardData(CF_HDROP) {
             if !handle.is_invalid() {
                 let hdrop = HDROP(handle.0);
                 let count = DragQueryFileW(hdrop, 0xFFFF_FFFF, None);
                 for i in 0..count {
                     let len = DragQueryFileW(hdrop, i, None) as usize;
-                    if len == 0 { continue; }
+                    if len == 0 {
+                        continue;
+                    }
                     let mut buf = vec![0u16; len + 1];
                     let got = DragQueryFileW(hdrop, i, Some(&mut buf));
-                    if got > 0 { files.push(String::from_utf16_lossy(&buf[..got as usize])); }
+                    if got > 0 {
+                        files.push(String::from_utf16_lossy(&buf[..got as usize]));
+                    }
                 }
             }
         }
@@ -465,7 +497,9 @@ fn get_clipboard_files() -> Vec<String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn get_clipboard_files() -> Vec<String> { Vec::new() }
+fn get_clipboard_files() -> Vec<String> {
+    Vec::new()
+}
 
 #[cfg(target_os = "windows")]
 fn set_clipboard_files(files: &[String]) -> Option<()> {
@@ -491,7 +525,9 @@ fn set_clipboard_files(files: &[String]) -> Option<()> {
     unsafe {
         let hglobal = GlobalAlloc(GMEM_MOVEABLE, total).ok()?;
         let ptr = GlobalLock(hglobal);
-        if ptr.is_null() { return None; }
+        if ptr.is_null() {
+            return None;
+        }
 
         let df = ptr as *mut DROPFILES;
         (*df).pFiles = header as u32;
@@ -501,7 +537,9 @@ fn set_clipboard_files(files: &[String]) -> Option<()> {
         std::ptr::copy_nonoverlapping(wide.as_ptr(), dst, wide.len());
         let _ = GlobalUnlock(hglobal);
 
-        if OpenClipboard(None).is_err() { return None; }
+        if OpenClipboard(None).is_err() {
+            return None;
+        }
         let _ = EmptyClipboard();
         if SetClipboardData(CF_HDROP, Some(HANDLE(hglobal.0))).is_err() {
             let _ = CloseClipboard();
@@ -513,7 +551,9 @@ fn set_clipboard_files(files: &[String]) -> Option<()> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn set_clipboard_files(_files: &[String]) -> Option<()> { None }
+fn set_clipboard_files(_files: &[String]) -> Option<()> {
+    None
+}
 
 // ── Windows: clipboard sequence number ───────────────────────────────────────
 
@@ -527,6 +567,7 @@ fn clipboard_seq() -> u32 {
 fn get_foreground_process_info() -> (String, String) {
     #[cfg(target_os = "windows")]
     unsafe {
+        use windows::core::PWSTR;
         use windows::Win32::Foundation::CloseHandle;
         use windows::Win32::System::Threading::{
             OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
@@ -535,7 +576,6 @@ fn get_foreground_process_info() -> (String, String) {
         use windows::Win32::UI::WindowsAndMessaging::{
             GetForegroundWindow, GetWindowThreadProcessId,
         };
-        use windows::core::PWSTR;
 
         let hwnd = GetForegroundWindow();
         let mut pid = 0u32;
@@ -571,13 +611,13 @@ fn get_foreground_process_info() -> (String, String) {
 
 #[cfg(target_os = "windows")]
 fn extract_icon_base64(exe_path: &str) -> Option<String> {
-    use windows::Win32::Graphics::Gdi::{
-        BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, DeleteDC, DeleteObject,
-        DIB_RGB_COLORS, GetDIBits, HGDIOBJ, SelectObject,
-    };
-    use windows::Win32::UI::Shell::{SHFILEINFOW, SHGetFileInfoW, SHGFI_ICON};
-    use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, ICONINFO};
     use windows::core::PCWSTR;
+    use windows::Win32::Graphics::Gdi::{
+        CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, SelectObject, BITMAPINFO,
+        BITMAPINFOHEADER, DIB_RGB_COLORS, HGDIOBJ,
+    };
+    use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON};
+    use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, ICONINFO};
 
     unsafe {
         let wide: Vec<u16> = exe_path.encode_utf16().chain(std::iter::once(0)).collect();
@@ -590,7 +630,9 @@ fn extract_icon_base64(exe_path: &str) -> Option<String> {
             std::mem::size_of::<SHFILEINFOW>() as u32,
             SHGFI_ICON,
         );
-        if result == 0 { return None; }
+        if result == 0 {
+            return None;
+        }
 
         let hicon = sfi.hIcon;
         let mut icon_info = std::mem::zeroed::<ICONINFO>();
@@ -619,23 +661,39 @@ fn extract_icon_base64(exe_path: &str) -> Option<String> {
         bmi.bmiHeader.biCompression = 0;
 
         let mut pixels = vec![0u8; (size * size * 4) as usize];
-        GetDIBits(hdc, hbmp, 0, size as u32, Some(pixels.as_mut_ptr() as _), &mut bmi, DIB_RGB_COLORS);
+        GetDIBits(
+            hdc,
+            hbmp,
+            0,
+            size as u32,
+            Some(pixels.as_mut_ptr() as _),
+            &mut bmi,
+            DIB_RGB_COLORS,
+        );
 
         let _ = DeleteDC(hdc);
         let _ = DeleteObject(HGDIOBJ(icon_info.hbmColor.0));
         let _ = DeleteObject(HGDIOBJ(icon_info.hbmMask.0));
         let _ = DestroyIcon(hicon);
 
-        for chunk in pixels.chunks_mut(4) { chunk.swap(0, 2); } // BGRA → RGBA
+        for chunk in pixels.chunks_mut(4) {
+            chunk.swap(0, 2);
+        } // BGRA → RGBA
 
-        let img = image::DynamicImage::ImageRgba8(
-            image::RgbaImage::from_raw(size as u32, size as u32, pixels)?,
-        );
+        let img = image::DynamicImage::ImageRgba8(image::RgbaImage::from_raw(
+            size as u32,
+            size as u32,
+            pixels,
+        )?);
         let mut png = Vec::new();
-        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .ok()?;
 
         use base64::Engine;
-        Some(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(&png)))
+        Some(format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&png)
+        ))
     }
 }
 
@@ -648,17 +706,30 @@ fn extract_icon_base64(_exe_path: &str) -> Option<String> {
 
 /// Save the full-res original to {dir}/images/{id}.png and return a small
 /// thumbnail data URL for the card preview.
-pub(crate) fn save_image_clip(img: arboard::ImageData, dir: &std::path::Path, id: &str) -> Option<String> {
-    let rgba = image::RgbaImage::from_raw(img.width as u32, img.height as u32, img.bytes.into_owned())?;
+pub(crate) fn save_image_clip(
+    img: arboard::ImageData,
+    dir: &std::path::Path,
+    id: &str,
+) -> Option<String> {
+    let rgba =
+        image::RgbaImage::from_raw(img.width as u32, img.height as u32, img.bytes.into_owned())?;
     let dyn_img = image::DynamicImage::ImageRgba8(rgba);
     let images_dir = dir.join("images");
     let _ = std::fs::create_dir_all(&images_dir);
-    let _ = dyn_img.save_with_format(images_dir.join(format!("{id}.png")), image::ImageFormat::Png);
+    let _ = dyn_img.save_with_format(
+        images_dir.join(format!("{id}.png")),
+        image::ImageFormat::Png,
+    );
     let thumb = dyn_img.thumbnail(IMG_MAX_DIM, IMG_MAX_DIM);
     let mut png = Vec::new();
-    thumb.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+    thumb
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .ok()?;
     use base64::Engine;
-    Some(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(&png)))
+    Some(format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(&png)
+    ))
 }
 
 /// Decode an image file the `image` crate can't handle (HEIC/HEIF above all —
@@ -673,7 +744,10 @@ fn decode_via_wic(path: &std::path::Path) -> Option<image::DynamicImage> {
         CLSID_WICImagingFactory, GUID_WICPixelFormat32bppRGBA, IWICImagingFactory,
         WICBitmapDitherTypeNone, WICBitmapPaletteTypeCustom, WICDecodeMetadataCacheOnDemand,
     };
-    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+        COINIT_MULTITHREADED,
+    };
 
     unsafe {
         // COM needs per-thread init; this may run on any worker thread (a
@@ -687,7 +761,11 @@ fn decode_via_wic(path: &std::path::Path) -> Option<image::DynamicImage> {
             let factory: IWICImagingFactory =
                 CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER).ok()?;
 
-            let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+            let wide: Vec<u16> = path
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
             let decoder = factory
                 .CreateDecoderFromFilename(
                     PCWSTR(wide.as_ptr()),
@@ -719,7 +797,9 @@ fn decode_via_wic(path: &std::path::Path) -> Option<image::DynamicImage> {
 
             let stride = w.checked_mul(4)?;
             let mut buf = vec![0u8; (stride as usize).checked_mul(h as usize)?];
-            converter.CopyPixels(std::ptr::null(), stride, &mut buf).ok()?;
+            converter
+                .CopyPixels(std::ptr::null(), stride, &mut buf)
+                .ok()?;
 
             image::RgbaImage::from_raw(w, h, buf).map(image::DynamicImage::ImageRgba8)
         })();
@@ -748,11 +828,17 @@ pub(crate) fn thumbnail_image_file(path: &std::path::Path) -> Option<(String, u3
     let (w, h) = (img.width(), img.height());
     let thumb = img.thumbnail(IMG_MAX_DIM, IMG_MAX_DIM);
     let mut png = Vec::new();
-    thumb.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+    thumb
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .ok()?;
     use base64::Engine;
     Some((
-        format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(&png)),
-        w, h,
+        format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&png)
+        ),
+        w,
+        h,
     ))
 }
 
@@ -763,8 +849,11 @@ fn set_clipboard_image_file(path: &std::path::Path) -> Option<()> {
     let (w, h) = (rgba.width() as usize, rgba.height() as usize);
     let mut cb = arboard::Clipboard::new().ok()?;
     cb.set_image(arboard::ImageData {
-        width: w, height: h, bytes: std::borrow::Cow::Owned(rgba.into_raw()),
-    }).ok()?;
+        width: w,
+        height: h,
+        bytes: std::borrow::Cow::Owned(rgba.into_raw()),
+    })
+    .ok()?;
     Some(())
 }
 
@@ -791,16 +880,60 @@ fn set_clipboard_image(data_url: &str) -> Option<()> {
 #[cfg(target_os = "windows")]
 fn send_ctrl_v() {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-        KEYEVENTF_KEYUP, VK_CONTROL, VIRTUAL_KEY,
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+        VIRTUAL_KEY, VK_CONTROL,
     };
     let vk_v = VIRTUAL_KEY(0x56);
     unsafe {
         let inputs = [
-            INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_CONTROL, wScan: 0, dwFlags: KEYBD_EVENT_FLAGS(0), time: 0, dwExtraInfo: 0 } } },
-            INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: vk_v,       wScan: 0, dwFlags: KEYBD_EVENT_FLAGS(0), time: 0, dwExtraInfo: 0 } } },
-            INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: vk_v,       wScan: 0, dwFlags: KEYEVENTF_KEYUP,     time: 0, dwExtraInfo: 0 } } },
-            INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_CONTROL, wScan: 0, dwFlags: KEYEVENTF_KEYUP,     time: 0, dwExtraInfo: 0 } } },
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VK_CONTROL,
+                        wScan: 0,
+                        dwFlags: KEYBD_EVENT_FLAGS(0),
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: vk_v,
+                        wScan: 0,
+                        dwFlags: KEYBD_EVENT_FLAGS(0),
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: vk_v,
+                        wScan: 0,
+                        dwFlags: KEYEVENTF_KEYUP,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VK_CONTROL,
+                        wScan: 0,
+                        dwFlags: KEYEVENTF_KEYUP,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
         ];
         SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
     }
@@ -888,7 +1021,14 @@ fn clear_history(state: tauri::State<'_, Store>) {
 #[tauri::command]
 fn rename_clip(state: tauri::State<'_, Store>, id: String, name: String) {
     let trimmed = name.trim();
-    state.rename(&id, if trimmed.is_empty() { None } else { Some(trimmed.to_string()) });
+    state.rename(
+        &id,
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        },
+    );
 }
 
 /// Place a clip on the system clipboard, setting the right paste-guard so the
@@ -899,7 +1039,10 @@ fn place_on_clipboard(state: &Store, guard: &PasteGuard, entry: &ClipboardEntry)
         let _ = set_clipboard_files(files);
     } else if let Some(data_url) = &entry.image_data {
         *guard.skip_image.lock().unwrap_or_else(|e| e.into_inner()) = true;
-        let full = state.data_dir.join("images").join(format!("{}.png", entry.id));
+        let full = state
+            .data_dir
+            .join("images")
+            .join(format!("{}.png", entry.id));
         if full.exists() {
             let _ = set_clipboard_image_file(&full);
         } else {
@@ -907,17 +1050,15 @@ fn place_on_clipboard(state: &Store, guard: &PasteGuard, entry: &ClipboardEntry)
         }
     } else {
         *guard.text.lock().unwrap_or_else(|e| e.into_inner()) = Some(entry.text.clone());
-        if let Ok(mut cb) = arboard::Clipboard::new() { let _ = cb.set_text(&entry.text); }
+        if let Ok(mut cb) = arboard::Clipboard::new() {
+            let _ = cb.set_text(&entry.text);
+        }
     }
 }
 
 /// Copy a clip to the clipboard WITHOUT pasting (right-click action).
 #[tauri::command]
-fn copy_clip(
-    state: tauri::State<'_, Store>,
-    guard: tauri::State<'_, PasteGuard>,
-    id: String,
-) {
+fn copy_clip(state: tauri::State<'_, Store>, guard: tauri::State<'_, PasteGuard>, id: String) {
     if let Some(entry) = state.find(&id) {
         place_on_clipboard(&state, &guard, &entry);
     }
@@ -927,7 +1068,9 @@ fn copy_clip(
 #[tauri::command]
 fn copy_text(guard: tauri::State<'_, PasteGuard>, text: String) {
     *guard.text.lock().unwrap_or_else(|e| e.into_inner()) = Some(text.clone());
-    if let Ok(mut cb) = arboard::Clipboard::new() { let _ = cb.set_text(&text); }
+    if let Ok(mut cb) = arboard::Clipboard::new() {
+        let _ = cb.set_text(&text);
+    }
 }
 
 /// Open a link in the browser, or a path in the file explorer (Alt-click).
@@ -935,8 +1078,10 @@ fn copy_text(guard: tauri::State<'_, PasteGuard>, text: String) {
 fn open_external(app: tauri::AppHandle, target: String) {
     use tauri_plugin_opener::OpenerExt;
     let t = target.trim().to_string();
-    let is_url = t.starts_with("http://") || t.starts_with("https://")
-        || t.starts_with("mailto:") || t.starts_with("tel:");
+    let is_url = t.starts_with("http://")
+        || t.starts_with("https://")
+        || t.starts_with("mailto:")
+        || t.starts_with("tel:");
     if is_url {
         let _ = app.opener().open_url(t, None::<&str>);
     } else {
@@ -968,13 +1113,23 @@ fn reveal_in_explorer(path: String) {
 #[tauri::command]
 fn open_image(app: tauri::AppHandle, id: String) {
     use tauri_plugin_opener::OpenerExt;
-    let path = app.state::<Store>().data_dir.join("images").join(format!("{id}.png"));
-    let _ = app.opener().open_path(path.to_string_lossy().into_owned(), None::<&str>);
+    let path = app
+        .state::<Store>()
+        .data_dir
+        .join("images")
+        .join(format!("{id}.png"));
+    let _ = app
+        .opener()
+        .open_path(path.to_string_lossy().into_owned(), None::<&str>);
 }
 
 #[tauri::command]
 fn reveal_image(app: tauri::AppHandle, id: String) {
-    let path = app.state::<Store>().data_dir.join("images").join(format!("{id}.png"));
+    let path = app
+        .state::<Store>()
+        .data_dir
+        .join("images")
+        .join(format!("{id}.png"));
     reveal_in_explorer(path.to_string_lossy().into_owned());
 }
 
@@ -996,11 +1151,7 @@ fn paste_clip(
 /// Paste an arbitrary string (used by the emoji picker). Guarded so the watcher
 /// does not turn it into a new clip.
 #[tauri::command]
-fn paste_text(
-    window: tauri::WebviewWindow,
-    guard: tauri::State<'_, PasteGuard>,
-    text: String,
-) {
+fn paste_text(window: tauri::WebviewWindow, guard: tauri::State<'_, PasteGuard>, text: String) {
     *guard.text.lock().unwrap_or_else(|e| e.into_inner()) = Some(text.clone());
     if let Ok(mut cb) = arboard::Clipboard::new() {
         let _ = cb.set_text(&text);
@@ -1052,172 +1203,141 @@ fn run_clipboard_watcher(app: &tauri::AppHandle) {
         Err(_) => return,
     };
 
+    #[cfg(target_os = "windows")]
+    let mut last_seq: u32 = clipboard_seq();
+    let mut last_text = String::new();
+    let mut last_image = String::new();
+    let mut last_files = String::new();
+    let mut ticks: u32 = 0;
+
+    loop {
+        thread::sleep(Duration::from_millis(200));
+
+        // Every ~30 min, expire stale clips and refresh the UI if anything went
+        ticks = ticks.wrapping_add(1);
+        if ticks % 9000 == 0 {
+            let state = app.state::<Store>();
+            if state.prune_expired() {
+                let _ = app.emit("clips-updated", state.get_all());
+            }
+        }
+
         #[cfg(target_os = "windows")]
-        let mut last_seq: u32 = clipboard_seq();
-        let mut last_text = String::new();
-        let mut last_image = String::new();
-        let mut last_files = String::new();
-        let mut ticks: u32 = 0;
-
-        loop {
-            thread::sleep(Duration::from_millis(200));
-
-            // Every ~30 min, expire stale clips and refresh the UI if anything went
-            ticks = ticks.wrapping_add(1);
-            if ticks % 9000 == 0 {
-                let state = app.state::<Store>();
-                if state.prune_expired() {
-                    let _ = app.emit("clips-updated", state.get_all());
-                }
+        {
+            let seq = clipboard_seq();
+            if seq == last_seq {
+                continue;
             }
+            last_seq = seq;
+        }
 
-            #[cfg(target_os = "windows")]
-            {
-                let seq = clipboard_seq();
-                if seq == last_seq { continue; }
-                last_seq = seq;
-            }
-
-            // ── File branch (copied files from Explorer) ──
-            {
-                let files = get_clipboard_files();
-                if !files.is_empty() {
-                    // Was this our own paste? skip it
-                    {
-                        let g = app.state::<PasteGuard>();
-                        let mut skip = g.skip_files.lock().unwrap_or_else(|e| e.into_inner());
-                        if *skip { *skip = false; continue; }
-                    }
-                    let joined = files.join("\n");
-                    if joined == last_files { continue; }
-                    last_files = joined.clone();
-
-                    let (process, exe_path) = get_foreground_process_info();
-                    let process_icon = if exe_path.is_empty() { None } else { extract_icon_base64(&exe_path) };
-                    let id = new_id();
-
-                    // Image files get a preview thumbnail
-                    let mut image_data = None;
-                    let mut img_w = 0u32;
-                    let mut img_h = 0u32;
-                    if files.len() == 1 {
-                        let p = std::path::Path::new(&files[0]);
-                        if is_image_path(p) {
-                            if let Some((thumb, w, h)) = thumbnail_image_file(p) {
-                                image_data = Some(thumb);
-                                img_w = w;
-                                img_h = h;
-                            }
-                        }
-                    }
-
-                    let entry = ClipboardEntry {
-                        id,
-                        text: joined,
-                        process,
-                        process_icon,
-                        timestamp: now_millis(),
-                        char_count: files.len(),
-                        image_data,
-                        pinned: false,
-                        img_w,
-                        img_h,
-                        name: None,
-                        files: Some(files),
-                    };
-                    {
-                        app.state::<Store>().add_clip(&entry);
-                    }
-                    let _ = app.emit("clipboard-new", entry);
-                    continue;
-                }
-            }
-
-            // ── Image branch ──
-            if let Ok(img) = clipboard.get_image() {
+        // ── File branch (copied files from Explorer) ──
+        {
+            let files = get_clipboard_files();
+            if !files.is_empty() {
                 // Was this our own paste? skip it
                 {
                     let g = app.state::<PasteGuard>();
-                    let mut skip = g.skip_image.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut skip = g.skip_files.lock().unwrap_or_else(|e| e.into_inner());
                     if *skip {
                         *skip = false;
                         continue;
                     }
                 }
+                let joined = files.join("\n");
+                if joined == last_files {
+                    continue;
+                }
+                last_files = joined.clone();
 
-                let iw = img.width as u32;
-                let ih = img.height as u32;
                 let (process, exe_path) = get_foreground_process_info();
+                let process_icon = if exe_path.is_empty() {
+                    None
+                } else {
+                    extract_icon_base64(&exe_path)
+                };
                 let id = new_id();
-                let dir = app.state::<Store>().data_dir.clone();
 
-                if let Some(image_data) = save_image_clip(img, &dir, &id) {
-                    if image_data == last_image {
-                        // duplicate — discard the original we just wrote
-                        let _ = std::fs::remove_file(dir.join("images").join(format!("{id}.png")));
-                        continue;
-                    }
-                    last_image = image_data.clone();
-
-                    let process_icon = if exe_path.is_empty() { None } else { extract_icon_base64(&exe_path) };
-
-                    let entry = ClipboardEntry {
-                        id,
-                        text: String::new(),
-                        process,
-                        process_icon,
-                        timestamp: now_millis(),
-                        char_count: 0,
-                        image_data: Some(image_data),
-                        pinned: false,
-                        img_w: iw,
-                        img_h: ih,
-                        name: None,
-                        files: None,
-                    };
-                    {
-                        app.state::<Store>().add_clip(&entry);
-                    }
-                    let _ = app.emit("clipboard-new", entry);
-                }
-                continue;
-            }
-
-            // ── Text branch ──
-            if let Ok(text) = clipboard.get_text() {
-                if text.trim().is_empty() { continue; }
-
-                // Was this our own paste? skip it
-                {
-                    let g = app.state::<PasteGuard>();
-                    let mut t = g.text.lock().unwrap_or_else(|e| e.into_inner());
-                    if t.as_deref() == Some(text.as_str()) {
-                        *t = None;
-                        last_text = text;
-                        continue;
+                // Image files get a preview thumbnail
+                let mut image_data = None;
+                let mut img_w = 0u32;
+                let mut img_h = 0u32;
+                if files.len() == 1 {
+                    let p = std::path::Path::new(&files[0]);
+                    if is_image_path(p) {
+                        if let Some((thumb, w, h)) = thumbnail_image_file(p) {
+                            image_data = Some(thumb);
+                            img_w = w;
+                            img_h = h;
+                        }
                     }
                 }
-
-                if text == last_text { continue; } // dedup
-
-                let (process, exe_path) = get_foreground_process_info();
-                let char_count = text.chars().count();
-                let stored = cap_text(&text);
-                let process_icon = if exe_path.is_empty() { None } else { extract_icon_base64(&exe_path) };
-
-                last_text = text;
 
                 let entry = ClipboardEntry {
-                    id: new_id(),
-                    text: stored,
+                    id,
+                    text: joined,
                     process,
                     process_icon,
                     timestamp: now_millis(),
-                    char_count,
-                    image_data: None,
+                    char_count: files.len(),
+                    image_data,
                     pinned: false,
-                    img_w: 0,
-                    img_h: 0,
+                    img_w,
+                    img_h,
+                    name: None,
+                    files: Some(files),
+                };
+                {
+                    app.state::<Store>().add_clip(&entry);
+                }
+                let _ = app.emit("clipboard-new", entry);
+                continue;
+            }
+        }
+
+        // ── Image branch ──
+        if let Ok(img) = clipboard.get_image() {
+            // Was this our own paste? skip it
+            {
+                let g = app.state::<PasteGuard>();
+                let mut skip = g.skip_image.lock().unwrap_or_else(|e| e.into_inner());
+                if *skip {
+                    *skip = false;
+                    continue;
+                }
+            }
+
+            let iw = img.width as u32;
+            let ih = img.height as u32;
+            let (process, exe_path) = get_foreground_process_info();
+            let id = new_id();
+            let dir = app.state::<Store>().data_dir.clone();
+
+            if let Some(image_data) = save_image_clip(img, &dir, &id) {
+                if image_data == last_image {
+                    // duplicate — discard the original we just wrote
+                    let _ = std::fs::remove_file(dir.join("images").join(format!("{id}.png")));
+                    continue;
+                }
+                last_image = image_data.clone();
+
+                let process_icon = if exe_path.is_empty() {
+                    None
+                } else {
+                    extract_icon_base64(&exe_path)
+                };
+
+                let entry = ClipboardEntry {
+                    id,
+                    text: String::new(),
+                    process,
+                    process_icon,
+                    timestamp: now_millis(),
+                    char_count: 0,
+                    image_data: Some(image_data),
+                    pinned: false,
+                    img_w: iw,
+                    img_h: ih,
                     name: None,
                     files: None,
                 };
@@ -1226,8 +1346,62 @@ fn run_clipboard_watcher(app: &tauri::AppHandle) {
                 }
                 let _ = app.emit("clipboard-new", entry);
             }
+            continue;
+        }
+
+        // ── Text branch ──
+        if let Ok(text) = clipboard.get_text() {
+            if text.trim().is_empty() {
+                continue;
+            }
+
+            // Was this our own paste? skip it
+            {
+                let g = app.state::<PasteGuard>();
+                let mut t = g.text.lock().unwrap_or_else(|e| e.into_inner());
+                if t.as_deref() == Some(text.as_str()) {
+                    *t = None;
+                    last_text = text;
+                    continue;
+                }
+            }
+
+            if text == last_text {
+                continue;
+            } // dedup
+
+            let (process, exe_path) = get_foreground_process_info();
+            let char_count = text.chars().count();
+            let stored = cap_text(&text);
+            let process_icon = if exe_path.is_empty() {
+                None
+            } else {
+                extract_icon_base64(&exe_path)
+            };
+
+            last_text = text;
+
+            let entry = ClipboardEntry {
+                id: new_id(),
+                text: stored,
+                process,
+                process_icon,
+                timestamp: now_millis(),
+                char_count,
+                image_data: None,
+                pinned: false,
+                img_w: 0,
+                img_h: 0,
+                name: None,
+                files: None,
+            };
+            {
+                app.state::<Store>().add_clip(&entry);
+            }
+            let _ = app.emit("clipboard-new", entry);
         }
     }
+}
 // ── No-activate overlay + click-outside dismissal (Windows) ───────────────────
 //
 // The bar floats without ever becoming the foreground window (WS_EX_NOACTIVATE),
@@ -1283,8 +1457,8 @@ unsafe extern "system" fn mouse_hook_proc(
     use std::sync::atomic::Ordering;
     use windows::Win32::Foundation::{HWND, RECT};
     use windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, GetWindowRect, IsWindowVisible, HC_ACTION, MSLLHOOKSTRUCT,
-        WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_RBUTTONDOWN,
+        CallNextHookEx, GetWindowRect, IsWindowVisible, HC_ACTION, MSLLHOOKSTRUCT, WM_LBUTTONDOWN,
+        WM_MBUTTONDOWN, WM_RBUTTONDOWN,
     };
 
     if code == HC_ACTION as i32 {
@@ -1328,8 +1502,8 @@ unsafe extern "system" fn keyboard_hook_proc(
 ) -> windows::Win32::Foundation::LRESULT {
     use std::sync::atomic::Ordering;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
-        KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_CONTROL, VK_LWIN, VK_RWIN,
+        GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+        KEYEVENTF_KEYUP, VK_CONTROL, VK_LWIN, VK_RWIN,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, WM_KEYDOWN, WM_SYSKEYDOWN,
@@ -1348,8 +1522,30 @@ unsafe extern "system" fn keyboard_hook_proc(
                 }
                 // Mask the lone-Win keyup so the Start menu doesn't pop.
                 let ctrl = [
-                    INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_CONTROL, wScan: 0, dwFlags: KEYBD_EVENT_FLAGS(0), time: 0, dwExtraInfo: INJECT_MARKER } } },
-                    INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_CONTROL, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: INJECT_MARKER } } },
+                    INPUT {
+                        r#type: INPUT_KEYBOARD,
+                        Anonymous: INPUT_0 {
+                            ki: KEYBDINPUT {
+                                wVk: VK_CONTROL,
+                                wScan: 0,
+                                dwFlags: KEYBD_EVENT_FLAGS(0),
+                                time: 0,
+                                dwExtraInfo: INJECT_MARKER,
+                            },
+                        },
+                    },
+                    INPUT {
+                        r#type: INPUT_KEYBOARD,
+                        Anonymous: INPUT_0 {
+                            ki: KEYBDINPUT {
+                                wVk: VK_CONTROL,
+                                wScan: 0,
+                                dwFlags: KEYEVENTF_KEYUP,
+                                time: 0,
+                                dwExtraInfo: INJECT_MARKER,
+                            },
+                        },
+                    },
                 ];
                 SendInput(&ctrl, std::mem::size_of::<INPUT>() as i32);
                 return windows::Win32::Foundation::LRESULT(1); // swallow
@@ -1359,8 +1555,30 @@ unsafe extern "system" fn keyboard_hook_proc(
                     let _ = tx.send(());
                 }
                 let ctrl = [
-                    INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_CONTROL, wScan: 0, dwFlags: KEYBD_EVENT_FLAGS(0), time: 0, dwExtraInfo: INJECT_MARKER } } },
-                    INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_CONTROL, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: INJECT_MARKER } } },
+                    INPUT {
+                        r#type: INPUT_KEYBOARD,
+                        Anonymous: INPUT_0 {
+                            ki: KEYBDINPUT {
+                                wVk: VK_CONTROL,
+                                wScan: 0,
+                                dwFlags: KEYBD_EVENT_FLAGS(0),
+                                time: 0,
+                                dwExtraInfo: INJECT_MARKER,
+                            },
+                        },
+                    },
+                    INPUT {
+                        r#type: INPUT_KEYBOARD,
+                        Anonymous: INPUT_0 {
+                            ki: KEYBDINPUT {
+                                wVk: VK_CONTROL,
+                                wScan: 0,
+                                dwFlags: KEYEVENTF_KEYUP,
+                                time: 0,
+                                dwExtraInfo: INJECT_MARKER,
+                            },
+                        },
+                    },
                 ];
                 SendInput(&ctrl, std::mem::size_of::<INPUT>() as i32);
                 return windows::Win32::Foundation::LRESULT(1); // swallow
@@ -1488,8 +1706,10 @@ fn reveal_window(app: &tauri::AppHandle, window: &tauri::WebviewWindow) {
     {
         use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
         let hwnd = unsafe { GetForegroundWindow() };
-        *app.state::<PrevForeground>().0.lock().unwrap_or_else(|e| e.into_inner()) =
-            hwnd.0 as isize;
+        *app.state::<PrevForeground>()
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = hwnd.0 as isize;
         // Re-assert non-activating in case a prior search turned it off.
         set_no_activate(window, true);
     }
@@ -1517,23 +1737,35 @@ pub(crate) fn cursor_pos() -> Option<(i32, i32)> {
     use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
     unsafe {
         let mut p = POINT::default();
-        if GetCursorPos(&mut p).is_ok() { Some((p.x, p.y)) } else { None }
+        if GetCursorPos(&mut p).is_ok() {
+            Some((p.x, p.y))
+        } else {
+            None
+        }
     }
 }
 
 #[cfg(not(target_os = "windows"))]
-pub(crate) fn cursor_pos() -> Option<(i32, i32)> { None }
+pub(crate) fn cursor_pos() -> Option<(i32, i32)> {
+    None
+}
 
 /// Place the bar at the bottom of whichever monitor the cursor is on.
 fn position_on_active_monitor(window: &tauri::WebviewWindow) {
     let monitors = window.available_monitors().unwrap_or_default();
     let active = cursor_pos()
         .and_then(|(cx, cy)| {
-            monitors.iter().find(|m| {
-                let p = m.position();
-                let s = m.size();
-                cx >= p.x && cx < p.x + s.width as i32 && cy >= p.y && cy < p.y + s.height as i32
-            }).cloned()
+            monitors
+                .iter()
+                .find(|m| {
+                    let p = m.position();
+                    let s = m.size();
+                    cx >= p.x
+                        && cx < p.x + s.width as i32
+                        && cy >= p.y
+                        && cy < p.y + s.height as i32
+                })
+                .cloned()
         })
         .or_else(|| window.primary_monitor().ok().flatten());
 
@@ -1576,10 +1808,14 @@ pub fn run() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
-                    if event.state() != ShortcutState::Pressed { return; }
-                    let target_default = Shortcut::new(Some(Modifiers::SHIFT | Modifiers::ALT), Code::KeyV);
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    let target_default =
+                        Shortcut::new(Some(Modifiers::SHIFT | Modifiers::ALT), Code::KeyV);
                     let target_win_v = Shortcut::new(Some(Modifiers::SUPER), Code::KeyV);
-                    let target_capture = Shortcut::new(Some(Modifiers::SHIFT | Modifiers::ALT), Code::KeyC);
+                    let target_capture =
+                        Shortcut::new(Some(Modifiers::SHIFT | Modifiers::ALT), Code::KeyC);
                     if shortcut == &target_default || shortcut == &target_win_v {
                         toggle_window(app);
                     } else if shortcut == &target_capture {
@@ -1619,7 +1855,9 @@ pub fn run() {
         ])
         .setup(|app| {
             // Store — must be managed before the watcher starts
-            let data_dir = app.path().app_data_dir()
+            let data_dir = app
+                .path()
+                .app_data_dir()
                 .unwrap_or_else(|_| PathBuf::from("."))
                 .join("clipboard-bar");
             app.manage(Store::new(data_dir));
@@ -1658,7 +1896,9 @@ pub fn run() {
 
             // Resolve Win+V override setting
             let win_v_override = matches!(
-                app.state::<Store>().get_setting("win_v_override").as_deref(),
+                app.state::<Store>()
+                    .get_setting("win_v_override")
+                    .as_deref(),
                 Some("1")
             );
             app.manage(WinVOverrideState(Mutex::new(win_v_override)));
@@ -1670,11 +1910,17 @@ pub fn run() {
             // discovery/HTTP threads bind/release their sockets in response
             // rather than just idling while "disabled".
             let localsend_enabled = matches!(
-                app.state::<Store>().get_setting("localsend_enabled").as_deref(),
+                app.state::<Store>()
+                    .get_setting("localsend_enabled")
+                    .as_deref(),
                 Some("1")
             );
-            let localsend_fingerprint = localsend::load_or_create_fingerprint(&app.state::<Store>());
-            app.manage(localsend::LocalSendState::new(localsend_fingerprint, localsend_enabled));
+            let localsend_fingerprint =
+                localsend::load_or_create_fingerprint(&app.state::<Store>());
+            app.manage(localsend::LocalSendState::new(
+                localsend_fingerprint,
+                localsend_enabled,
+            ));
             localsend::start(app.handle().clone());
             if localsend_enabled {
                 // Was already on from a previous session — make sure the
@@ -1682,7 +1928,9 @@ pub fn run() {
                 // won't have one yet even if the setting carried over). Off
                 // the main thread since this can show a UAC prompt.
                 let app_for_fw = app.handle().clone();
-                thread::spawn(move || localsend::ensure_firewall_rule(&app_for_fw.state::<Store>()));
+                thread::spawn(move || {
+                    localsend::ensure_firewall_rule(&app_for_fw.state::<Store>())
+                });
             }
 
             // Shift+Alt+V is the always-on base shortcut, so the app is reachable
@@ -1692,7 +1940,8 @@ pub fn run() {
                 eprintln!("Failed to register global shortcut Shift+Alt+V: {:?}", e);
             }
 
-            let capture_shortcut = Shortcut::new(Some(Modifiers::SHIFT | Modifiers::ALT), Code::KeyC);
+            let capture_shortcut =
+                Shortcut::new(Some(Modifiers::SHIFT | Modifiers::ALT), Code::KeyC);
             if let Err(e) = app.global_shortcut().register(capture_shortcut) {
                 eprintln!("Failed to register global shortcut Shift+Alt+C: {:?}", e);
             }
@@ -1751,21 +2000,78 @@ pub fn run() {
             }
 
             let autostart_on = app.autolaunch().is_enabled().unwrap_or(false);
-            let startup_item = CheckMenuItem::with_id(app, "toggle_autostart", "Run at startup", true, autostart_on, None::<&str>)?;
-            let light_item = CheckMenuItem::with_id(app, "toggle_theme", "Light mode", true, light, None::<&str>)?;
-            let acrylic_item = CheckMenuItem::with_id(app, "toggle_backdrop", "Acrylic", true, acrylic, None::<&str>)?;
-            let ontop_item = CheckMenuItem::with_id(app, "toggle_ontop", "Always on top", true, always_on_top, None::<&str>)?;
-            let win_v_item = CheckMenuItem::with_id(app, "toggle_win_v", "Use Win+V", true, win_v_override, None::<&str>)?;
-            let localsend_item = CheckMenuItem::with_id(app, "toggle_localsend", "LocalSend", true, localsend_enabled, None::<&str>)?;
+            let startup_item = CheckMenuItem::with_id(
+                app,
+                "toggle_autostart",
+                "Run at startup",
+                true,
+                autostart_on,
+                None::<&str>,
+            )?;
+            let light_item = CheckMenuItem::with_id(
+                app,
+                "toggle_theme",
+                "Light mode",
+                true,
+                light,
+                None::<&str>,
+            )?;
+            let acrylic_item = CheckMenuItem::with_id(
+                app,
+                "toggle_backdrop",
+                "Acrylic",
+                true,
+                acrylic,
+                None::<&str>,
+            )?;
+            let ontop_item = CheckMenuItem::with_id(
+                app,
+                "toggle_ontop",
+                "Always on top",
+                true,
+                always_on_top,
+                None::<&str>,
+            )?;
+            let win_v_item = CheckMenuItem::with_id(
+                app,
+                "toggle_win_v",
+                "Use Win+V",
+                true,
+                win_v_override,
+                None::<&str>,
+            )?;
+            let localsend_item = CheckMenuItem::with_id(
+                app,
+                "toggle_localsend",
+                "LocalSend",
+                true,
+                localsend_enabled,
+                None::<&str>,
+            )?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&startup_item, &light_item, &acrylic_item, &ontop_item, &win_v_item, &localsend_item, &quit])?;
+            let menu = Menu::with_items(
+                app,
+                &[
+                    &startup_item,
+                    &light_item,
+                    &acrylic_item,
+                    &ontop_item,
+                    &win_v_item,
+                    &localsend_item,
+                    &quit,
+                ],
+            )?;
             let li = light_item.clone();
             let si = startup_item.clone();
             let ai = acrylic_item.clone();
             let oi = ontop_item.clone();
             let wi = win_v_item.clone();
             let lsi = localsend_item.clone();
-            let tooltip = if win_v_override { "Clip — Win+V" } else { "Clip — Shift+Alt+V" };
+            let tooltip = if win_v_override {
+                "Clip — Win+V"
+            } else {
+                "Clip — Shift+Alt+V"
+            };
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
@@ -1780,7 +2086,8 @@ pub fn run() {
                             *cur
                         };
                         let _ = li.set_checked(new_light);
-                        app.state::<Store>().set_setting("theme", if new_light { "light" } else { "dark" });
+                        app.state::<Store>()
+                            .set_setting("theme", if new_light { "light" } else { "dark" });
                         if let Some(window) = app.get_webview_window("main") {
                             apply_theme(&window, new_light);
                         }
@@ -1793,7 +2100,8 @@ pub fn run() {
                             *cur
                         };
                         let _ = ai.set_checked(new_acrylic);
-                        app.state::<Store>().set_setting("backdrop", if new_acrylic { "acrylic" } else { "mica" });
+                        app.state::<Store>()
+                            .set_setting("backdrop", if new_acrylic { "acrylic" } else { "mica" });
                         if let Some(window) = app.get_webview_window("main") {
                             let light = {
                                 let ts = app.state::<ThemeState>();
@@ -1811,7 +2119,8 @@ pub fn run() {
                             *cur
                         };
                         let _ = oi.set_checked(new_ontop);
-                        app.state::<Store>().set_setting("always_on_top", if new_ontop { "1" } else { "0" });
+                        app.state::<Store>()
+                            .set_setting("always_on_top", if new_ontop { "1" } else { "0" });
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.set_always_on_top(new_ontop);
                         }
@@ -1824,33 +2133,47 @@ pub fn run() {
                             *cur
                         };
                         let _ = wi.set_checked(new_override);
-                        app.state::<Store>().set_setting("win_v_override", if new_override { "1" } else { "0" });
+                        app.state::<Store>()
+                            .set_setting("win_v_override", if new_override { "1" } else { "0" });
                         update_win_v_override(app, new_override);
                     }
                     "toggle_localsend" => {
                         let ls = app.state::<localsend::LocalSendState>();
                         let new_enabled = !ls.enabled.load(std::sync::atomic::Ordering::Relaxed);
-                        ls.enabled.store(new_enabled, std::sync::atomic::Ordering::Relaxed);
+                        ls.enabled
+                            .store(new_enabled, std::sync::atomic::Ordering::Relaxed);
                         let _ = lsi.set_checked(new_enabled);
-                        app.state::<Store>().set_setting("localsend_enabled", if new_enabled { "1" } else { "0" });
+                        app.state::<Store>()
+                            .set_setting("localsend_enabled", if new_enabled { "1" } else { "0" });
                         if new_enabled {
                             // May show a UAC prompt (see ensure_firewall_rule) —
                             // off the tray-event thread so the menu isn't stuck.
                             let app_for_fw = app.clone();
-                            thread::spawn(move || localsend::ensure_firewall_rule(&app_for_fw.state::<Store>()));
+                            thread::spawn(move || {
+                                localsend::ensure_firewall_rule(&app_for_fw.state::<Store>())
+                            });
                         }
                     }
                     "toggle_autostart" => {
                         let mgr = app.autolaunch();
                         let enabled = mgr.is_enabled().unwrap_or(false);
-                        if enabled { let _ = mgr.disable(); } else { let _ = mgr.enable(); }
+                        if enabled {
+                            let _ = mgr.disable();
+                        } else {
+                            let _ = mgr.enable();
+                        }
                         let now = mgr.is_enabled().unwrap_or(!enabled);
                         let _ = si.set_checked(now);
                     }
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
                         toggle_window(tray.app_handle());
                     }
                 })

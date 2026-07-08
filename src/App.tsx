@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { SearchBox, TabList, Tab, Button } from "@fluentui/react-components";
@@ -119,16 +119,49 @@ function isMarkdown(s: string): boolean {
   if (/\|[^\n]+\|\s*\n\s*\|?[\s:|-]+\|/.test(s)) score += 2;
   return score >= 2;
 }
+function proseLineRatio(lines: string[]): number {
+  if (!lines.length) return 0;
+  const proseLines = lines.filter((line) => {
+    const words = line.trim().split(/\s+/).filter(Boolean);
+    return words.length >= 7 && /[.!?]["')\]]*$/.test(line.trim());
+  }).length;
+  return proseLines / lines.length;
+}
+
 function looksLikeCode(t: string): boolean {
-  const markers = [
-    "=>", "function ", "const ", "let ", "var ", "def ", "class ", "import ",
-    "#include", "public ", "private ", "void ", "fn ", "console.log", "System.out",
-    "println", "#!/", "() {", ");",
-  ];
-  const hits = markers.filter((m) => t.includes(m)).length;
-  const hasBlock = t.includes("{") && t.includes("}") && t.includes("\n");
-  const semiLines = t.split("\n").filter((l) => l.trimEnd().endsWith(";")).length;
-  return (hits >= 1 && (t.includes("\n") || hits >= 2)) || (hasBlock && semiLines >= 2);
+  const lines = t.split(/\r?\n/).map((l) => l.trimEnd()).filter((l) => l.trim().length);
+  if (!lines.length) return false;
+
+  const codeLines = lines.filter((line) => {
+    const s = line.trim();
+    return /^(import|export)\s+.+\s+from\s+["']/.test(s)
+      || /^(const|let|var)\s+[A-Za-z_$][\w$]*\s*=/.test(s)
+      || /^(async\s+)?function\s+[A-Za-z_$][\w$]*\s*\(/.test(s)
+      || /^(def|fn)\s+[A-Za-z_][\w]*\s*\(/.test(s)
+      || /^(class|interface|enum|struct)\s+[A-Za-z_][\w]*/.test(s)
+      || /^#include\s*[<"]/.test(s)
+      || /\b(console\.log|System\.out|println!)\s*\(/.test(s)
+      || /[{};]\s*$/.test(s)
+      || /^\s*[)}\]]\s*[;,]?$/.test(line);
+  }).length;
+
+  const proseRatio = proseLineRatio(lines);
+  const hasParagraphs = /\S[.!?]["')\]]?\s*\r?\n\s*\r?\n\s*\S/.test(t);
+  if ((proseRatio >= 0.35 || hasParagraphs) && codeLines < 3) return false;
+
+  let score = 0;
+  if (/```[\s\S]*```/.test(t)) score += 4;
+  if (/^(import|export)\s+.+\s+from\s+["']/m.test(t)) score += 3;
+  if (/\b(const|let|var)\s+[A-Za-z_$][\w$]*\s*=/.test(t)) score += 2;
+  if (/\b(async\s+)?function\s+[A-Za-z_$][\w$]*\s*\(/.test(t)) score += 2;
+  if (/\b(def|fn)\s+[A-Za-z_][\w]*\s*\(/.test(t)) score += 2;
+  if (/\b(class|interface|enum|struct)\s+[A-Za-z_][\w]*/.test(t)) score += 2;
+  if (/=>|==={0,1}|!==|&&|\|\||::|->/.test(t)) score += 1;
+  if ((t.match(/[{};]/g) || []).length >= 3) score += 1;
+  if (codeLines >= 3) score += 2;
+  if (codeLines >= Math.max(2, Math.ceil(lines.length * 0.45))) score += 2;
+
+  return score >= 3;
 }
 
 const VERSE_SPECIFIER = /<(?:public|private|internal|protected|epic_internal|override|native|final|abstract|unique|concrete|castable|persistent|suspends|decides|transacts|varies|computes|converges|reads|writes|allocates|no_rollback|constructor)>/;
@@ -170,10 +203,16 @@ function detectKind(text: string): Kind {
   if (looksLikeCode(s)) return "code";
   return "text";
 }
+const kindCache = new Map<string, { text: string; image: boolean; filesKey: string; kind: Kind }>();
 function effectiveKind(e: ClipboardEntry): Kind {
-  if (e.files && e.files.length) return "file";
-  if (e.image_data) return "image";
-  return detectKind(e.text);
+  const image = !!e.image_data;
+  const filesKey = e.files?.join("\u0000") ?? "";
+  const cached = kindCache.get(e.id);
+  if (cached && cached.text === e.text && cached.image === image && cached.filesKey === filesKey) return cached.kind;
+  const kind = e.files && e.files.length ? "file" : image ? "image" : detectKind(e.text);
+  kindCache.set(e.id, { text: e.text, image, filesKey, kind });
+  if (kindCache.size > 1000) kindCache.delete(kindCache.keys().next().value!);
+  return kind;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -259,6 +298,17 @@ function codeInfoFor(kind: Kind, text: string): { html: string; language?: strin
   if (kind === "xml") return highlightCode(text, "xml");
   if (kind === "code") return highlightCode(text, guessLang(text));
   return null;
+}
+
+const codeInfoCache = new Map<string, { html: string; language?: string } | null>();
+function cachedCodeInfoFor(kind: Kind, text: string): { html: string; language?: string } | null {
+  if (kind !== "json" && kind !== "xml" && kind !== "code") return null;
+  const key = `${kind}\u0000${text}`;
+  if (codeInfoCache.has(key)) return codeInfoCache.get(key)!;
+  const info = codeInfoFor(kind, text);
+  codeInfoCache.set(key, info);
+  if (codeInfoCache.size > 300) codeInfoCache.delete(codeInfoCache.keys().next().value!);
+  return info;
 }
 
 /// Proper display name for a highlight.js language id ("verse" → "Verse",
@@ -616,7 +666,7 @@ function CardBody({ kind, entry, codeHtml }: { kind: Kind; entry: ClipboardEntry
 
 // ── Color card (full-bleed swatch + copyable formats) ───────────────────────────
 
-function ColorCard({
+const ColorCard = memo(function ColorCard({
   entry, onPin, onDelete, notify, onContextMenu,
 }: {
   entry: ClipboardEntry;
@@ -662,11 +712,11 @@ function ColorCard({
       </div>
     </div>
   );
-}
+});
 
 // ── Unified card ───────────────────────────────────────────────────────────────
 
-function Card({
+const Card = memo(function Card({
   entry, onPin, onDelete, onRename, onContextMenu,
 }: {
   entry: ClipboardEntry;
@@ -735,7 +785,7 @@ function Card({
   const commit = () => { setEditing(false); onRename(entry.id, name); };
   const cancel = () => { setName(entry.name ?? ""); setEditing(false); };
 
-  const codeInfo = useMemo(() => codeInfoFor(kind, entry.text), [kind, entry.text]);
+  const codeInfo = useMemo(() => cachedCodeInfoFor(kind, entry.text), [kind, entry.text]);
 
   const favicon = kind === "link" ? `https://www.google.com/s2/favicons?domain=${domainOf(url)}&sz=64` : null;
   // Code cards show the detected language (Verse, TypeScript, …) as the label.
@@ -829,7 +879,7 @@ function Card({
       </div>
     </div>
   );
-}
+});
 
 // ── Emoji picker ───────────────────────────────────────────────────────────────
 
@@ -1301,19 +1351,32 @@ function App() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const displayedRef = useRef<ClipboardEntry[]>([]);
   const toastTimer = useRef<number | undefined>(undefined);
+  const fadeRaf = useRef<number | undefined>(undefined);
   const drag = useDragScroll(scrollRef);
 
-  const notify = (msg: string) => {
+  const notify = useCallback((msg: string) => {
     setToast(msg);
     window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(null), 1300);
-  };
+  }, []);
 
-  const updateFades = () => {
+  const updateFadesNow = useCallback(() => {
     const el = scrollRef.current; if (!el) return;
     el.classList.toggle("can-left", el.scrollLeft > 4);
     el.classList.toggle("can-right", el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
-  };
+  }, []);
+
+  const scheduleUpdateFades = useCallback(() => {
+    if (fadeRaf.current !== undefined) return;
+    fadeRaf.current = window.requestAnimationFrame(() => {
+      fadeRaf.current = undefined;
+      updateFadesNow();
+    });
+  }, [updateFadesNow]);
+
+  useEffect(() => () => {
+    if (fadeRaf.current !== undefined) window.cancelAnimationFrame(fadeRaf.current);
+  }, []);
 
   useEffect(() => {
     const prevent = (e: Event) => e.preventDefault();
@@ -1382,33 +1445,33 @@ function App() {
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollLeft = 0;
-    updateFades();
-  }, [filter, search]);
+    scheduleUpdateFades();
+  }, [filter, search, scheduleUpdateFades]);
 
-  const handlePin = async (id: string) => {
+  const handlePin = useCallback(async (id: string) => {
     const newPinned = await invoke<boolean>("toggle_pin", { id });
     setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, pinned: newPinned } : e)));
-  };
-  const handleDelete = async (id: string, e: React.MouseEvent) => {
+  }, []);
+  const handleDelete = useCallback(async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     await invoke("delete_clip", { id });
     setEntries((prev) => prev.filter((entry) => entry.id !== id));
-  };
-  const handleRename = async (id: string, name: string) => {
+  }, []);
+  const handleRename = useCallback(async (id: string, name: string) => {
     await invoke("rename_clip", { id, name });
     setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, name: name.trim() || null } : e)));
-  };
-  const handleCopy = (id: string) => { invoke("copy_clip", { id }); notify("Copied to clipboard"); };
-  const handleClear = async () => {
+  }, []);
+  const handleCopy = useCallback((id: string) => { invoke("copy_clip", { id }); notify("Copied to clipboard"); }, [notify]);
+  const handleClear = useCallback(async () => {
     await invoke("clear_history");
     setEntries((prev) => prev.filter((e) => e.pinned));
     notify("Cleared unpinned clips");
-  };
-  const openContextMenu = (e: React.MouseEvent, entry: ClipboardEntry) => {
+  }, [notify]);
+  const openContextMenu = useCallback((e: React.MouseEvent, entry: ClipboardEntry) => {
     e.preventDefault();
     e.stopPropagation();
     setCtxMenu({ x: e.clientX, y: e.clientY, entry });
-  };
+  }, []);
   const groupCounts = useMemo(() => {
     const c: Record<Group, number> & { pinned: number } = { text: 0, code: 0, link: 0, image: 0, file: 0, color: 0, pinned: 0 };
     for (const e of entries) { c[filterGroup(effectiveKind(e))]++; if (e.pinned) c.pinned++; }
@@ -1437,7 +1500,7 @@ function App() {
   }, [entries, search, filter]);
   displayedRef.current = displayed;
 
-  useEffect(() => { updateFades(); }, [displayed.length]);
+  useEffect(() => { scheduleUpdateFades(); }, [displayed.length, scheduleUpdateFades]);
 
   const emojiIcon = loadRecentEmojis()[0] || "😀";
   const emptyMsg = search
@@ -1456,7 +1519,7 @@ function App() {
       <div
         className={`cards-row${filter === "emoji" ? " is-emoji" : ""}${filter === "downloader" ? " is-downloader" : ""}`}
         ref={scrollRef}
-        onScroll={updateFades}
+        onScroll={scheduleUpdateFades}
         {...(filter === "emoji" || filter === "downloader" ? {} : drag)}
       >
         {filter === "downloader" ? (

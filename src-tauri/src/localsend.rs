@@ -95,8 +95,9 @@ fn load_or_create_tls(store: &Store) -> (Vec<u8>, Vec<u8>) {
             return (cert, key);
         }
     }
-    let CertifiedKey { cert, signing_key } = generate_simple_self_signed(vec!["localhost".to_string()])
-        .expect("generate self-signed LocalSend TLS cert");
+    let CertifiedKey { cert, signing_key } =
+        generate_simple_self_signed(vec!["localhost".to_string()])
+            .expect("generate self-signed LocalSend TLS cert");
     let cert_pem = cert.pem().into_bytes();
     let key_pem = signing_key.serialize_pem().into_bytes();
     let _ = std::fs::create_dir_all(&store.data_dir);
@@ -110,8 +111,12 @@ fn load_or_create_tls(store: &Store) -> (Vec<u8>, Vec<u8>) {
 /// yields an unpredictable 64-bit value. Good enough for a device fingerprint /
 /// upload token — neither is a security boundary here (LAN + auto-accept).
 fn gen_random_hex32() -> String {
-    let a = std::collections::hash_map::RandomState::new().build_hasher().finish();
-    let b = std::collections::hash_map::RandomState::new().build_hasher().finish();
+    let a = std::collections::hash_map::RandomState::new()
+        .build_hasher()
+        .finish();
+    let b = std::collections::hash_map::RandomState::new()
+        .build_hasher()
+        .finish();
     format!("{a:016x}{b:016x}")
 }
 
@@ -350,7 +355,9 @@ pub fn localsend_send_to_ip(app: AppHandle, id: String, ip: String, port: u16) {
 
 fn send_clip_to(app: &AppHandle, id: &str, ip: &str, port: u16) -> Result<(), String> {
     let store = app.state::<Store>();
-    let entry = store.find(id).ok_or_else(|| "That clip is gone.".to_string())?;
+    let entry = store
+        .find(id)
+        .ok_or_else(|| "That clip is gone.".to_string())?;
 
     // Figure out what bytes to send: real file(s) on disk, the full-res saved
     // image, or — for plain text — a temp .txt file (deleted after sending).
@@ -366,7 +373,10 @@ fn send_clip_to(app: &AppHandle, id: &str, ip: &str, port: u16) -> Result<(), St
             })
             .collect()
     } else if entry.image_data.is_some() {
-        let full = store.data_dir.join("images").join(format!("{}.png", entry.id));
+        let full = store
+            .data_dir
+            .join("images")
+            .join(format!("{}.png", entry.id));
         if !full.exists() {
             return Err("That image's file is missing.".to_string());
         }
@@ -406,7 +416,15 @@ fn record_history(store: &Store, ip: &str, port: u16) {
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
     list.retain(|e| e.ip != ip);
-    list.insert(0, HistoryEntry { ip: ip.to_string(), port, alias, last_used_ms: now_millis() });
+    list.insert(
+        0,
+        HistoryEntry {
+            ip: ip.to_string(),
+            port,
+            alias,
+            last_used_ms: now_millis(),
+        },
+    );
     list.truncate(5);
     if let Ok(json) = serde_json::to_string(&list) {
         store.set_setting("localsend_history", &json);
@@ -421,7 +439,12 @@ pub fn localsend_get_history(app: AppHandle) -> Vec<HistoryEntry> {
         .unwrap_or_default()
 }
 
-fn send_files(app: &AppHandle, ip: &str, port: u16, items: &[(String, String, PathBuf)]) -> Result<(), String> {
+fn send_files(
+    app: &AppHandle,
+    ip: &str,
+    port: u16,
+    items: &[(String, String, PathBuf)],
+) -> Result<(), String> {
     let our_info = app.state::<LocalSendState>().device_info();
     let base = format!("https://{ip}:{port}");
 
@@ -432,12 +455,20 @@ fn send_files(app: &AppHandle, ip: &str, port: u16, items: &[(String, String, Pa
         let file_id = new_id();
         files_req.insert(
             file_id.clone(),
-            FileMeta { id: file_id.clone(), file_name: name.clone(), size, file_type: Some(mime.clone()) },
+            FileMeta {
+                id: file_id.clone(),
+                file_name: name.clone(),
+                size,
+                file_type: Some(mime.clone()),
+            },
         );
         file_ids.push((file_id, path.clone()));
     }
 
-    let prep_req = PrepareUploadMsg { info: our_info, files: files_req };
+    let prep_req = PrepareUploadMsg {
+        info: our_info,
+        files: files_req,
+    };
     let body = serde_json::to_vec(&prep_req).map_err(|e| e.to_string())?;
 
     let mut resp = ls_agent()
@@ -448,13 +479,21 @@ fn send_files(app: &AppHandle, ip: &str, port: u16, items: &[(String, String, Pa
             ureq::Error::StatusCode(403) => "The other device declined.".to_string(),
             _ => format!("Couldn't reach that device ({e})."),
         })?;
-    let text = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
+    let text = resp
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| e.to_string())?;
     let prep: PrepareUploadResp = serde_json::from_str(&text).map_err(|e| e.to_string())?;
 
     let mut sent_any = false;
     for (file_id, path) in &file_ids {
-        let Some(token) = prep.files.get(file_id) else { continue };
-        let url = format!("{base}/api/localsend/v2/upload?sessionId={}&fileId={}&token={}", prep.session_id, file_id, token);
+        let Some(token) = prep.files.get(file_id) else {
+            continue;
+        };
+        let url = format!(
+            "{base}/api/localsend/v2/upload?sessionId={}&fileId={}&token={}",
+            prep.session_id, file_id, token
+        );
         let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
         ls_agent()
             .post(&url)
@@ -475,7 +514,10 @@ fn send_files(app: &AppHandle, ip: &str, port: u16, items: &[(String, String, Pa
 
 fn send_announce(socket: &UdpSocket, app: &AppHandle) {
     let info = app.state::<LocalSendState>().device_info();
-    let msg = AnnounceMsg { info, announce: true };
+    let msg = AnnounceMsg {
+        info,
+        announce: true,
+    };
     if let Ok(bytes) = serde_json::to_vec(&msg) {
         let _ = socket.send_to(&bytes, (MULTICAST_ADDR, LOCALSEND_PORT));
     }
@@ -494,7 +536,11 @@ fn upsert_peer(app: &AppHandle, info: &DeviceInfo, ip: String) {
         device_type: info.device_type.clone(),
         last_seen_ms: now_millis(),
     };
-    state.peers.lock().unwrap_or_else(|e| e.into_inner()).insert(peer.fingerprint.clone(), peer);
+    state
+        .peers
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(peer.fingerprint.clone(), peer);
 }
 
 /// Reply to a multicast announce with our own info via unicast HTTPS register,
@@ -504,9 +550,14 @@ fn reply_register(app: &AppHandle, ip: String, port: u16) {
     let app = app.clone();
     thread::spawn(move || {
         let info = app.state::<LocalSendState>().device_info();
-        let Ok(body) = serde_json::to_vec(&info) else { return };
+        let Ok(body) = serde_json::to_vec(&info) else {
+            return;
+        };
         let url = format!("https://{ip}:{port}/api/localsend/v2/register");
-        let _ = ls_agent().post(&url).header("Content-Type", "application/json").send(&body[..]);
+        let _ = ls_agent()
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .send(&body[..]);
     });
 }
 
@@ -558,7 +609,11 @@ fn set_multicast_outbound_interface(_socket: &UdpSocket, _iface: Ipv4Addr) {}
 fn run_discovery(app: AppHandle) {
     let mut retry = RetryBackoff::new();
     loop {
-        if !app.state::<LocalSendState>().enabled.load(Ordering::Relaxed) {
+        if !app
+            .state::<LocalSendState>()
+            .enabled
+            .load(Ordering::Relaxed)
+        {
             retry.reset();
             thread::sleep(Duration::from_millis(500));
             continue;
@@ -587,7 +642,11 @@ fn run_discovery(app: AppHandle) {
 
         let mut last_announce = Instant::now() - ANNOUNCE_INTERVAL;
         let mut buf = [0u8; 8192];
-        while app.state::<LocalSendState>().enabled.load(Ordering::Relaxed) {
+        while app
+            .state::<LocalSendState>()
+            .enabled
+            .load(Ordering::Relaxed)
+        {
             if last_announce.elapsed() >= ANNOUNCE_INTERVAL {
                 send_announce(&socket, &app);
                 last_announce = Instant::now();
@@ -603,7 +662,11 @@ fn run_discovery(app: AppHandle) {
                         reply_register(&app, ip, port);
                     }
                 }
-                Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
                 Err(_) => {}
             }
         }
@@ -642,7 +705,11 @@ fn handle_register(app: &AppHandle, mut request: tiny_http::Request) {
 }
 
 fn handle_prepare_upload(app: &AppHandle, mut request: tiny_http::Request) {
-    if !app.state::<LocalSendState>().enabled.load(Ordering::Relaxed) {
+    if !app
+        .state::<LocalSendState>()
+        .enabled
+        .load(Ordering::Relaxed)
+    {
         let _ = request.respond(Response::empty(403));
         return;
     }
@@ -673,7 +740,10 @@ fn handle_prepare_upload(app: &AppHandle, mut request: tiny_http::Request) {
     for (file_id, meta) in req.files {
         let token = gen_random_hex32();
         let clip_id = new_id();
-        let ext = Path::new(&meta.file_name).extension().and_then(|e| e.to_str()).unwrap_or("bin");
+        let ext = Path::new(&meta.file_name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("bin");
         let dest = dir.join(format!("{clip_id}.{ext}"));
         pending.insert(
             file_id.clone(),
@@ -694,14 +764,23 @@ fn handle_prepare_upload(app: &AppHandle, mut request: tiny_http::Request) {
         .unwrap_or_else(|e| e.into_inner())
         .insert(session_id.clone(), UploadSession { files: pending });
 
-    respond_json(request, 200, &PrepareUploadResp { session_id, files: files_tokens });
+    respond_json(
+        request,
+        200,
+        &PrepareUploadResp {
+            session_id,
+            files: files_tokens,
+        },
+    );
 }
 
 fn handle_upload(app: &AppHandle, mut request: tiny_http::Request, query: &str) {
     let params = parse_query(query);
-    let (Some(session_id), Some(file_id), Some(token)) =
-        (params.get("sessionId"), params.get("fileId"), params.get("token"))
-    else {
+    let (Some(session_id), Some(file_id), Some(token)) = (
+        params.get("sessionId"),
+        params.get("fileId"),
+        params.get("token"),
+    ) else {
         let _ = request.respond(Response::empty(400));
         return;
     };
@@ -713,7 +792,14 @@ fn handle_upload(app: &AppHandle, mut request: tiny_http::Request, query: &str) 
             .get(session_id)
             .and_then(|s| s.files.get(file_id))
             .filter(|f| &f.token == token)
-            .map(|f| (f.dest.clone(), f.clip_id.clone(), f.file_name.clone(), f.file_type.clone()))
+            .map(|f| {
+                (
+                    f.dest.clone(),
+                    f.clip_id.clone(),
+                    f.file_name.clone(),
+                    f.file_type.clone(),
+                )
+            })
     };
     drop(state);
 
@@ -722,7 +808,8 @@ fn handle_upload(app: &AppHandle, mut request: tiny_http::Request, query: &str) 
         return;
     };
 
-    let write_result = std::fs::File::create(&dest).and_then(|mut out| std::io::copy(request.as_reader(), &mut out));
+    let write_result = std::fs::File::create(&dest)
+        .and_then(|mut out| std::io::copy(request.as_reader(), &mut out));
     if write_result.is_err() {
         let _ = std::fs::remove_file(&dest);
         let _ = request.respond(Response::empty(500));
@@ -737,7 +824,11 @@ fn handle_cancel(app: &AppHandle, request: tiny_http::Request, query: &str) {
     let params = parse_query(query);
     if let Some(session_id) = params.get("sessionId") {
         let state = app.state::<LocalSendState>();
-        let removed = state.sessions.lock().unwrap_or_else(|e| e.into_inner()).remove(session_id);
+        let removed = state
+            .sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(session_id);
         if let Some(session) = removed {
             for f in session.files.values() {
                 let _ = std::fs::remove_file(&f.dest);
@@ -751,7 +842,13 @@ fn handle_cancel(app: &AppHandle, request: tiny_http::Request, query: &str) {
 /// reusing the same `clipboard-new` event the frontend already listens to.
 /// Small `text/*` sends are converted back into a plain-text clip (so a
 /// "send text" from a phone pastes like normal copy/paste, not a file).
-fn finalize_received_file(app: &AppHandle, clip_id: &str, path: &Path, file_name: &str, file_type: &str) {
+fn finalize_received_file(
+    app: &AppHandle,
+    clip_id: &str,
+    path: &Path,
+    file_name: &str,
+    file_type: &str,
+) {
     let store = app.state::<Store>();
     let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
 
@@ -835,13 +932,20 @@ fn handle_request(app: &AppHandle, request: tiny_http::Request) {
 fn run_http_server(app: AppHandle, certificate: Vec<u8>, private_key: Vec<u8>) {
     let mut retry = RetryBackoff::new();
     loop {
-        if !app.state::<LocalSendState>().enabled.load(Ordering::Relaxed) {
+        if !app
+            .state::<LocalSendState>()
+            .enabled
+            .load(Ordering::Relaxed)
+        {
             retry.reset();
             thread::sleep(Duration::from_millis(500));
             continue;
         }
 
-        let ssl = SslConfig { certificate: certificate.clone(), private_key: private_key.clone() };
+        let ssl = SslConfig {
+            certificate: certificate.clone(),
+            private_key: private_key.clone(),
+        };
         let server = match tiny_http::Server::https(("0.0.0.0", LOCALSEND_PORT), ssl) {
             Ok(s) => s,
             Err(e) => {
@@ -853,7 +957,11 @@ fn run_http_server(app: AppHandle, certificate: Vec<u8>, private_key: Vec<u8>) {
         eprintln!("LocalSend: HTTPS server listening on {LOCALSEND_PORT}");
         retry.reset();
 
-        while app.state::<LocalSendState>().enabled.load(Ordering::Relaxed) {
+        while app
+            .state::<LocalSendState>()
+            .enabled
+            .load(Ordering::Relaxed)
+        {
             match server.recv_timeout(Duration::from_millis(800)) {
                 Ok(Some(request)) => {
                     let app = app.clone();
@@ -921,7 +1029,9 @@ fn add_firewall_rule() -> bool {
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
-    let Ok(exe) = std::env::current_exe() else { return false };
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
     let exe = exe.to_string_lossy();
 
     // One elevated cmd.exe call adding both rules, so there's a single UAC
@@ -939,7 +1049,14 @@ fn add_firewall_rule() -> bool {
         // value is a legacy HINSTANCE-shaped status: >32 means the elevated
         // process actually launched (the user approved UAC); <=32 covers
         // every failure/cancellation case.
-        let result = ShellExecuteW(None, w!("runas"), w!("cmd.exe"), PCWSTR(params_w.as_ptr()), None, SW_HIDE);
+        let result = ShellExecuteW(
+            None,
+            w!("runas"),
+            w!("cmd.exe"),
+            PCWSTR(params_w.as_ptr()),
+            None,
+            SW_HIDE,
+        );
         (result.0 as isize) > 32
     }
 }

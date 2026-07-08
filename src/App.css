@@ -154,6 +154,9 @@ img { -webkit-user-drag: none; user-select: none; pointer-events: none; }
 .card {
   --rx: 0deg; --ry: 0deg; --tz: 0px;
   position: relative; flex-shrink: 0;
+  contain: layout paint style;
+  content-visibility: auto;
+  contain-intrinsic-size: 240px 240px;
   height: 100%; aspect-ratio: 1 / 1;
   border-radius: 15px; cursor: pointer; background: transparent;
   transform: perspective(1150px) translateZ(var(--tz)) rotateX(var(--rx)) rotateY(var(--ry));

@@ -80,9 +80,13 @@ impl Store {
     pub fn new(data_dir: PathBuf) -> Self {
         std::fs::create_dir_all(&data_dir).ok();
         let conn = Connection::open(data_dir.join("clips.db")).expect("open clips.db");
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;").ok();
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
+            .ok();
         conn.execute_batch(SCHEMA).expect("init schema");
-        let store = Self { conn: Mutex::new(conn), data_dir };
+        let store = Self {
+            conn: Mutex::new(conn),
+            data_dir,
+        };
         store.migrate_from_json();
         store.prune_expired();
         store
@@ -117,7 +121,9 @@ impl Store {
     /// One-time import of the legacy clips.json, then archive it.
     fn migrate_from_json(&self) {
         let json_path = self.data_dir.join("clips.json");
-        if !json_path.exists() { return; }
+        if !json_path.exists() {
+            return;
+        }
         let count: i64 = self
             .lock()
             .query_row("SELECT COUNT(*) FROM clips", [], |r| r.get(0))
@@ -125,7 +131,9 @@ impl Store {
         if count == 0 {
             if let Ok(s) = std::fs::read_to_string(&json_path) {
                 if let Ok(entries) = serde_json::from_str::<Vec<ClipboardEntry>>(&s) {
-                    for e in &entries { self.add_clip(e); }
+                    for e in &entries {
+                        self.add_clip(e);
+                    }
                 }
             }
         }
@@ -170,35 +178,46 @@ impl Store {
 
     pub fn toggle_pin(&self, id: &str) -> bool {
         let conn = self.lock();
-        let _ = conn.execute("UPDATE clips SET pinned = 1 - pinned WHERE id = ?1", params![id]);
-        conn.query_row("SELECT pinned FROM clips WHERE id = ?1", params![id], |r| r.get::<_, i64>(0))
-            .map(|v| v != 0)
-            .unwrap_or(false)
+        let _ = conn.execute(
+            "UPDATE clips SET pinned = 1 - pinned WHERE id = ?1",
+            params![id],
+        );
+        conn.query_row("SELECT pinned FROM clips WHERE id = ?1", params![id], |r| {
+            r.get::<_, i64>(0)
+        })
+        .map(|v| v != 0)
+        .unwrap_or(false)
     }
 
     pub fn delete_clip(&self, id: &str) {
         self.remove_image_file(id);
         self.remove_download_file(id);
-        let _ = self.lock().execute("DELETE FROM clips WHERE id = ?1", params![id]);
+        let _ = self
+            .lock()
+            .execute("DELETE FROM clips WHERE id = ?1", params![id]);
     }
 
     pub fn rename(&self, id: &str, name: Option<String>) {
-        let _ = self.lock().execute("UPDATE clips SET name = ?2 WHERE id = ?1", params![id, name]);
+        let _ = self.lock().execute(
+            "UPDATE clips SET name = ?2 WHERE id = ?1",
+            params![id, name],
+        );
     }
 
     pub fn clear_all(&self) {
         let conn = self.lock();
         // All unpinned ids, so we can remove any backing image/download files.
-        let ids: Vec<String> = match conn
-            .prepare("SELECT id FROM clips WHERE pinned=0")
-        {
+        let ids: Vec<String> = match conn.prepare("SELECT id FROM clips WHERE pinned=0") {
             Ok(mut stmt) => stmt
                 .query_map([], |r| r.get::<_, String>(0))
                 .map(|rs| rs.filter_map(|x| x.ok()).collect())
                 .unwrap_or_default(),
             Err(_) => Vec::new(),
         };
-        for id in &ids { self.remove_image_file(id); self.remove_download_file(id); }
+        for id in &ids {
+            self.remove_image_file(id);
+            self.remove_download_file(id);
+        }
         let _ = conn.execute("DELETE FROM clips WHERE pinned=0", []);
     }
 
@@ -206,18 +225,23 @@ impl Store {
     pub fn prune_expired(&self) -> bool {
         let cutoff = super::now_millis().saturating_sub(CLIP_TTL_MS) as i64;
         let conn = self.lock();
-        let ids: Vec<String> = match conn.prepare(
-            "SELECT id FROM clips WHERE pinned=0 AND timestamp < ?1",
-        ) {
-            Ok(mut stmt) => stmt
-                .query_map(params![cutoff], |r| r.get::<_, String>(0))
-                .map(|rs| rs.filter_map(|x| x.ok()).collect())
-                .unwrap_or_default(),
-            Err(_) => Vec::new(),
-        };
-        for id in &ids { self.remove_image_file(id); self.remove_download_file(id); }
+        let ids: Vec<String> =
+            match conn.prepare("SELECT id FROM clips WHERE pinned=0 AND timestamp < ?1") {
+                Ok(mut stmt) => stmt
+                    .query_map(params![cutoff], |r| r.get::<_, String>(0))
+                    .map(|rs| rs.filter_map(|x| x.ok()).collect())
+                    .unwrap_or_default(),
+                Err(_) => Vec::new(),
+            };
+        for id in &ids {
+            self.remove_image_file(id);
+            self.remove_download_file(id);
+        }
         let n = conn
-            .execute("DELETE FROM clips WHERE pinned=0 AND timestamp < ?1", params![cutoff])
+            .execute(
+                "DELETE FROM clips WHERE pinned=0 AND timestamp < ?1",
+                params![cutoff],
+            )
             .unwrap_or(0);
         n > 0
     }
@@ -245,7 +269,11 @@ impl Store {
     // ── Settings (key/value) ──
     pub fn get_setting(&self, key: &str) -> Option<String> {
         self.lock()
-            .query_row("SELECT value FROM settings WHERE key = ?1", params![key], |r| r.get(0))
+            .query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                params![key],
+                |r| r.get(0),
+            )
             .ok()
     }
 
@@ -265,8 +293,12 @@ mod tests {
     fn tmp_store() -> Store {
         static N: AtomicU32 = AtomicU32::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir()
-            .join(format!("clip-test-{}-{}-{}", std::process::id(), super::super::now_millis(), n));
+        let dir = std::env::temp_dir().join(format!(
+            "clip-test-{}-{}-{}",
+            std::process::id(),
+            super::super::now_millis(),
+            n
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         Store::new(dir)
     }
@@ -307,7 +339,10 @@ mod tests {
         assert!(store.prune_expired(), "prune should report a change");
 
         assert!(store.find("old1").is_none(), "entry should be gone");
-        assert!(!file.exists(), "downloaded file should be deleted from disk");
+        assert!(
+            !file.exists(),
+            "downloaded file should be deleted from disk"
+        );
     }
 
     #[test]
@@ -331,7 +366,10 @@ mod tests {
 
         store.clear_all();
 
-        assert!(store.find("a").is_none() && !gone.exists(), "unpinned wiped");
+        assert!(
+            store.find("a").is_none() && !gone.exists(),
+            "unpinned wiped"
+        );
         assert!(store.find("b").is_some() && kept.exists(), "pinned kept");
     }
 
@@ -343,7 +381,13 @@ mod tests {
         for i in 0..(MAX_IMAGE_CLIPS as u32) {
             add_download(&store, &format!("f{i}"), 5_000 - i as u64);
         }
-        assert!(store.find("v").is_none(), "oldest entry should be evicted by the cap");
-        assert!(!victim.exists(), "evicted download file should be deleted from disk");
+        assert!(
+            store.find("v").is_none(),
+            "oldest entry should be evicted by the cap"
+        );
+        assert!(
+            !victim.exists(),
+            "evicted download file should be deleted from disk"
+        );
     }
 }

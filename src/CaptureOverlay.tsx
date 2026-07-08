@@ -19,11 +19,16 @@ export default function CaptureOverlay() {
     // capture — each hotkey press emits a freshly grabbed frame (grabbed
     // before this window ever touches the screen, so hardware-composited
     // content like video captures correctly instead of reading back black).
-    const un = listen<string>("capture-frame", (e) => {
+    const reset = () => {
       draggingRef.current = false;
       startRef.current = null;
       setRect(null);
       setTextMode(false);
+      setFrame(null);
+    };
+    const unReset = listen("capture-reset", reset);
+    const un = listen<string>("capture-frame", (e) => {
+      reset();
       setFrame(e.payload);
     });
     const onKey = (ev: KeyboardEvent) => {
@@ -32,6 +37,7 @@ export default function CaptureOverlay() {
     };
     window.addEventListener("keydown", onKey, true);
     return () => {
+      unReset.then((f) => f());
       un.then((f) => f());
       window.removeEventListener("keydown", onKey, true);
     };

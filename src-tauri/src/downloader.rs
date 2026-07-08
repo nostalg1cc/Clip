@@ -61,7 +61,10 @@ pub fn downloader_ready(app: AppHandle) -> bool {
 }
 
 fn emit_setup(app: &AppHandle, stage: &str, error: Option<&str>) {
-    let _ = app.emit("downloader-setup", json!({ "stage": stage, "error": error }));
+    let _ = app.emit(
+        "downloader-setup",
+        json!({ "stage": stage, "error": error }),
+    );
 }
 
 /// Download + extract yt-dlp and ffmpeg into the app-data bin dir. Runs on a
@@ -124,7 +127,12 @@ pub fn setup_downloader(app: AppHandle) {
             let extracted = bin.join("ffmpeg_extract");
             let _ = std::fs::create_dir_all(&extracted);
             let untar = hidden_str("tar")
-                .args(["-xf", &zip.to_string_lossy(), "-C", &extracted.to_string_lossy()])
+                .args([
+                    "-xf",
+                    &zip.to_string_lossy(),
+                    "-C",
+                    &extracted.to_string_lossy(),
+                ])
                 .status()
                 .map(|s| s.success())
                 .unwrap_or(false);
@@ -137,8 +145,18 @@ pub fn setup_downloader(app: AppHandle) {
             // folder — find and lift them out.
             let mut found_ffmpeg = false;
             let mut found_ffprobe = false;
-            find_and_copy(&extracted, "ffmpeg.exe", &ffmpeg_path(&app), &mut found_ffmpeg);
-            find_and_copy(&extracted, "ffprobe.exe", &ffprobe_path(&app), &mut found_ffprobe);
+            find_and_copy(
+                &extracted,
+                "ffmpeg.exe",
+                &ffmpeg_path(&app),
+                &mut found_ffmpeg,
+            );
+            find_and_copy(
+                &extracted,
+                "ffprobe.exe",
+                &ffprobe_path(&app),
+                &mut found_ffprobe,
+            );
 
             let _ = std::fs::remove_dir_all(&extracted);
             let _ = std::fs::remove_file(&zip);
@@ -193,9 +211,9 @@ fn emit_progress(app: &AppHandle, id: &str, stage: &str, percent: f64, message: 
 pub fn start_download(
     app: AppHandle,
     url: String,
-    format: String,   // "mp4" | "mp3"
-    quality: String,  // "best" | "2160" | "1440" | "1080" | "720" | "480"
-    target_mb: u32,   // 0 = no compression
+    format: String,  // "mp4" | "mp3"
+    quality: String, // "best" | "2160" | "1440" | "1080" | "720" | "480"
+    target_mb: u32,  // 0 = no compression
 ) -> String {
     let id = new_id();
     let job = id.clone();
@@ -208,7 +226,13 @@ pub fn start_download(
 fn run_download(app: &AppHandle, id: &str, url: &str, format: &str, quality: &str, target_mb: u32) {
     let dl_dir = downloads_dir(app);
     if std::fs::create_dir_all(&dl_dir).is_err() {
-        emit_progress(app, id, "error", 0.0, Some("Couldn't create the downloads folder."));
+        emit_progress(
+            app,
+            id,
+            "error",
+            0.0,
+            Some("Couldn't create the downloads folder."),
+        );
         return;
     }
 
@@ -298,7 +322,13 @@ fn run_download(app: &AppHandle, id: &str, url: &str, format: &str, quality: &st
     let _ = stderr_handle.join();
 
     if !success {
-        emit_progress(app, id, "error", 0.0, Some("Download failed (unsupported or private link?)."));
+        emit_progress(
+            app,
+            id,
+            "error",
+            0.0,
+            Some("Download failed (unsupported or private link?)."),
+        );
         return;
     }
 
@@ -310,7 +340,13 @@ fn run_download(app: &AppHandle, id: &str, url: &str, format: &str, quality: &st
         if let Some(p) = find_media_file(&dl_dir, id) {
             media_path = p;
         } else {
-            emit_progress(app, id, "error", 0.0, Some("Finished, but the file went missing."));
+            emit_progress(
+                app,
+                id,
+                "error",
+                0.0,
+                Some("Finished, but the file went missing."),
+            );
             return;
         }
     }
@@ -326,13 +362,20 @@ fn run_download(app: &AppHandle, id: &str, url: &str, format: &str, quality: &st
     // Thumbnail → base64 data URL, then discard the jpg.
     let thumb_path = dl_dir.join(format!("{id}.jpg"));
     let image_data = std::fs::read(&thumb_path).ok().map(|bytes| {
-        format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes))
+        format!(
+            "data:image/jpeg;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&bytes)
+        )
     });
     let _ = std::fs::remove_file(&thumb_path);
 
     let title = {
         let t = title.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        if t.is_empty() { url.to_string() } else { t }
+        if t.is_empty() {
+            url.to_string()
+        } else {
+            t
+        }
     };
     let size_bytes = std::fs::metadata(&media_path).map(|m| m.len()).unwrap_or(0);
 
@@ -363,7 +406,11 @@ fn find_media_file(dir: &Path, id: &str) -> Option<PathBuf> {
         let path = entry.path();
         let name = path.file_name()?.to_string_lossy().to_string();
         if name.starts_with(&prefix) {
-            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
             if !matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "webp") {
                 return Some(path);
             }
@@ -387,7 +434,10 @@ fn probe_duration(app: &AppHandle, file: &Path) -> Option<f64> {
         .arg(file)
         .output()
         .ok()?;
-    String::from_utf8_lossy(&out.stdout).trim().parse::<f64>().ok()
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse::<f64>()
+        .ok()
 }
 
 /// Re-encode `file` in place to fit under `target_mb`. Best-effort: on any failure
@@ -408,7 +458,11 @@ fn compress_to_size(app: &AppHandle, file: &Path, target_mb: u32) {
     let stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or("out");
     let passlog = dir.join(format!("{stem}_pass"));
     let out = dir.join(format!("{stem}_c.mp4"));
-    let null = if cfg!(target_os = "windows") { "NUL" } else { "/dev/null" };
+    let null = if cfg!(target_os = "windows") {
+        "NUL"
+    } else {
+        "/dev/null"
+    };
 
     // Pass 1 (analysis, no audio, discard output).
     let p1 = hidden(&ffmpeg_path(app))
