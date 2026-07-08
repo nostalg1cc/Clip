@@ -15,6 +15,7 @@ use std::ffi::c_void;
 mod store;
 use store::{ClipboardEntry, Store};
 
+mod capture;
 mod downloader;
 mod localsend;
 
@@ -647,7 +648,7 @@ fn extract_icon_base64(_exe_path: &str) -> Option<String> {
 
 /// Save the full-res original to {dir}/images/{id}.png and return a small
 /// thumbnail data URL for the card preview.
-fn save_image_clip(img: arboard::ImageData, dir: &std::path::Path, id: &str) -> Option<String> {
+pub(crate) fn save_image_clip(img: arboard::ImageData, dir: &std::path::Path, id: &str) -> Option<String> {
     let rgba = image::RgbaImage::from_raw(img.width as u32, img.height as u32, img.bytes.into_owned())?;
     let dyn_img = image::DynamicImage::ImageRgba8(rgba);
     let images_dir = dir.join("images");
@@ -960,6 +961,23 @@ fn reveal_in_explorer(path: String) {
     }
 }
 
+/// Open an image clip's full-res file in the default viewer / reveal it in
+/// Explorer. The path is deterministic (see `save_image_clip`), so there's
+/// nothing to look up beyond the id — every image clip, screenshots
+/// included, has a real file on disk at this location.
+#[tauri::command]
+fn open_image(app: tauri::AppHandle, id: String) {
+    use tauri_plugin_opener::OpenerExt;
+    let path = app.state::<Store>().data_dir.join("images").join(format!("{id}.png"));
+    let _ = app.opener().open_path(path.to_string_lossy().into_owned(), None::<&str>);
+}
+
+#[tauri::command]
+fn reveal_image(app: tauri::AppHandle, id: String) {
+    let path = app.state::<Store>().data_dir.join("images").join(format!("{id}.png"));
+    reveal_in_explorer(path.to_string_lossy().into_owned());
+}
+
 /// Paste a clip by id. Handles both text and image clips, then hides the
 /// window and simulates Ctrl+V into whatever was focused before us.
 #[tauri::command]
@@ -1230,6 +1248,11 @@ static DISMISS_TX: std::sync::OnceLock<std::sync::mpsc::Sender<()>> = std::sync:
 static WIN_V_OVERRIDE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 #[cfg(target_os = "windows")]
 static TOGGLE_TX: std::sync::OnceLock<std::sync::mpsc::Sender<()>> = std::sync::OnceLock::new();
+/// Win+C is hijacked unconditionally (no settings toggle, unlike Win+V) to
+/// launch the screen capture overlay instead of whatever Windows would
+/// normally do with it (Copilot key on newer builds, nothing on older ones).
+#[cfg(target_os = "windows")]
+static CAPTURE_TX: std::sync::OnceLock<std::sync::mpsc::Sender<()>> = std::sync::OnceLock::new();
 
 /// Add or remove WS_EX_NOACTIVATE. On by default (float without focus); the
 /// front-end turns it off via `focus_search` when the user clicks the search
@@ -1331,6 +1354,17 @@ unsafe extern "system" fn keyboard_hook_proc(
                 SendInput(&ctrl, std::mem::size_of::<INPUT>() as i32);
                 return windows::Win32::Foundation::LRESULT(1); // swallow
             }
+            if !injected && kb.vkCode == 0x43 /* 'C' */ && win_down {
+                if let Some(tx) = CAPTURE_TX.get() {
+                    let _ = tx.send(());
+                }
+                let ctrl = [
+                    INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_CONTROL, wScan: 0, dwFlags: KEYBD_EVENT_FLAGS(0), time: 0, dwExtraInfo: INJECT_MARKER } } },
+                    INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_CONTROL, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: INJECT_MARKER } } },
+                ];
+                SendInput(&ctrl, std::mem::size_of::<INPUT>() as i32);
+                return windows::Win32::Foundation::LRESULT(1); // swallow
+            }
         }
     }
     CallNextHookEx(None, code, wparam, lparam)
@@ -1349,6 +1383,15 @@ fn install_overlay_dismiss(app: &tauri::AppHandle) {
     let _ = DISMISS_TX.set(dtx);
     let (ttx, trx) = std::sync::mpsc::channel::<()>();
     let _ = TOGGLE_TX.set(ttx);
+
+    let (ctx, crx) = std::sync::mpsc::channel::<()>();
+    let _ = CAPTURE_TX.set(ctx);
+    let app_cap = app.clone();
+    thread::spawn(move || {
+        while crx.recv().is_ok() {
+            capture::start_screen_capture(&app_cap);
+        }
+    });
 
     let app_c = app.clone();
     thread::spawn(move || {
@@ -1469,7 +1512,7 @@ fn toggle_window(app: &tauri::AppHandle) {
 }
 
 #[cfg(target_os = "windows")]
-fn cursor_pos() -> Option<(i32, i32)> {
+pub(crate) fn cursor_pos() -> Option<(i32, i32)> {
     use windows::Win32::Foundation::POINT;
     use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
     unsafe {
@@ -1479,7 +1522,7 @@ fn cursor_pos() -> Option<(i32, i32)> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn cursor_pos() -> Option<(i32, i32)> { None }
+pub(crate) fn cursor_pos() -> Option<(i32, i32)> { None }
 
 /// Place the bar at the bottom of whichever monitor the cursor is on.
 fn position_on_active_monitor(window: &tauri::WebviewWindow) {
@@ -1536,8 +1579,11 @@ pub fn run() {
                     if event.state() != ShortcutState::Pressed { return; }
                     let target_default = Shortcut::new(Some(Modifiers::SHIFT | Modifiers::ALT), Code::KeyV);
                     let target_win_v = Shortcut::new(Some(Modifiers::SUPER), Code::KeyV);
+                    let target_capture = Shortcut::new(Some(Modifiers::SHIFT | Modifiers::ALT), Code::KeyC);
                     if shortcut == &target_default || shortcut == &target_win_v {
                         toggle_window(app);
+                    } else if shortcut == &target_capture {
+                        capture::start_screen_capture(app);
                     }
                 })
                 .build(),
@@ -1551,6 +1597,8 @@ pub fn run() {
             copy_text,
             open_external,
             reveal_in_explorer,
+            open_image,
+            reveal_image,
             rename_clip,
             get_history,
             toggle_pin,
@@ -1565,7 +1613,9 @@ pub fn run() {
             localsend::localsend_list_peers,
             localsend::localsend_send,
             localsend::localsend_send_to_ip,
-            localsend::localsend_get_history
+            localsend::localsend_get_history,
+            capture::capture_cancel,
+            capture::capture_finish_selection
         ])
         .setup(|app| {
             // Store — must be managed before the watcher starts
@@ -1573,6 +1623,7 @@ pub fn run() {
                 .unwrap_or_else(|_| PathBuf::from("."))
                 .join("clipboard-bar");
             app.manage(Store::new(data_dir));
+            app.manage(capture::CaptureState::new());
 
             // Run at startup — enabled by default on first launch (user can opt out)
             {
@@ -1641,6 +1692,11 @@ pub fn run() {
                 eprintln!("Failed to register global shortcut Shift+Alt+V: {:?}", e);
             }
 
+            let capture_shortcut = Shortcut::new(Some(Modifiers::SHIFT | Modifiers::ALT), Code::KeyC);
+            if let Err(e) = app.global_shortcut().register(capture_shortcut) {
+                eprintln!("Failed to register global shortcut Shift+Alt+C: {:?}", e);
+            }
+
             // Win+V override is handled by the low-level keyboard hook installed
             // below — just prime the flag it reads. This is what makes it persist
             // across reboots (no registry / Explorer-restart / hotkey race).
@@ -1671,6 +1727,25 @@ pub fn run() {
                 window.on_window_event(move |event| {
                     if matches!(event, tauri::WindowEvent::Focused(false)) {
                         hide_bar(&w);
+                    }
+                });
+            }
+
+            // The capture overlay takes real focus while it's up (unlike the
+            // bar), so losing focus — alt-tab, another window stealing it —
+            // means the user bailed: cancel the pending capture and hide.
+            if let Some(cap) = app.get_webview_window("capture") {
+                let c = cap.clone();
+                cap.on_window_event(move |event| {
+                    if matches!(event, tauri::WindowEvent::Focused(false))
+                        && c.is_visible().unwrap_or(false)
+                    {
+                        let app = c.app_handle().clone();
+                        let _ = c.hide();
+                        std::thread::spawn(move || {
+                            // clear via the command path so temp-file cleanup stays in one place
+                            capture::capture_cancel(app);
+                        });
                     }
                 });
             }

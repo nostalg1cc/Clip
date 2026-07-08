@@ -562,6 +562,37 @@ img { -webkit-user-drag: none; user-select: none; pointer-events: none; }
   );
 }
 /* the header now sits directly on the gradient — no fill, no divider */
+
+/* Third variant of the source-app color: lightened toward white (an "overlay"-
+   style lift). The black rim on .card stays untouched for elevation — this is
+   layered separately as an inset highlight hugging the inside edge of the
+   card surface, so it reads as a glass-like bevel rather than replacing the border. */
+.card:not(.is-color) {
+  --card-border: color-mix(in srgb, color-mix(in oklch, var(--header-color, #2a2a32) 65%, white) 45%, transparent);
+  --card-border-width: 1.25px;
+}
+.card:not(.is-color):not(.is-media) .card-clip::before {
+  /* a pseudo-element, not a box-shadow directly on .card-clip, so it paints
+     above the media image (which fills the clip at inset:0 and would
+     otherwise cover an inset shadow sitting on the parent's own box).
+     z-index is pushed well above every other layer in the card (header
+     overlay 2, footer overlay 3, pin glint 6, play badge 1) so the ring
+     is always the topmost thing drawn, no matter what kind of card this is. */
+  content: ""; position: absolute; inset: 0; z-index: 20; pointer-events: none;
+  border-radius: 15px;
+  box-shadow: inset 0 0 0 var(--card-border-width) var(--card-border);
+}
+/* Media cards sit on a photo, not the app-color gradient, so a tinted ring
+   clashes — plain white instead. mix-blend-mode: overlay was tried here, but
+   overlay's formula on a dark base is ~2×base, i.e. it barely lifts near-black
+   pixels at all — the ring all but vanished over dark parts of the image.
+   Plain alpha compositing (no blend mode) always lightens by a visible,
+   predictable amount regardless of what's underneath: result = base·(1-a) + a. */
+.card.is-media .card-clip::before {
+  content: ""; position: absolute; inset: 0; z-index: 20; pointer-events: none;
+  border-radius: 15px;
+  box-shadow: inset 0 0 0 var(--card-border-width) rgba(255, 255, 255, 0.25);
+}
 .card:not(.is-media) .card-header { box-shadow: none; }
 
 /* Body text */

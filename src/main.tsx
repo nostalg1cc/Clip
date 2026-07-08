@@ -3,7 +3,9 @@ import ReactDOM from "react-dom/client";
 import { FluentProvider, webDarkTheme, webLightTheme } from "@fluentui/react-components";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import App from "./App";
+import CaptureOverlay from "./CaptureOverlay";
 
 function Root() {
   const [mode, setMode] = useState<"light" | "dark">("dark");
@@ -30,8 +32,10 @@ function Root() {
   );
 }
 
+const isCapture = getCurrentWindow().label === "capture";
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <Root />
+    {isCapture ? <CaptureOverlay /> : <Root />}
   </React.StrictMode>,
 );

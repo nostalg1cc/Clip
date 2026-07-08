@@ -801,10 +801,24 @@ function Card({
                 <ExternalIcon />
               </button>
             )}
+            {kind === "image" && (
+              <button className="action-btn open-btn"
+                onClick={(e) => { e.stopPropagation(); invoke("open_image", { id: entry.id }); invoke("hide_window"); }}
+                aria-label="Open image">
+                <ExternalIcon />
+              </button>
+            )}
             {kind === "file" && (
               <button className="action-btn open-btn"
                 onClick={(e) => { e.stopPropagation(); invoke("reveal_in_explorer", { path: entry.files?.[0] ?? entry.text }); }}
                 aria-label="Open file location">
+                <RevealIcon />
+              </button>
+            )}
+            {kind === "image" && (
+              <button className="action-btn open-btn"
+                onClick={(e) => { e.stopPropagation(); invoke("reveal_image", { id: entry.id }); }}
+                aria-label="Show in folder">
                 <RevealIcon />
               </button>
             )}
